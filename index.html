@@ -241,6 +241,11 @@
   .doc-sign-grid .line{border-bottom:1px solid #9AA5B8;height:26px;}
   .doc-sign-grid .lbl{font-size:11px;color:#5B6472;margin-top:4px;letter-spacing:.02em;}
   .doc-signed-block{border:1px solid #DCE3ED;border-radius:8px;padding:12px 14px;background:#FAFBFD;}
+  .doc-sign-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 20px;margin-top:12px;}
+  .doc-sign-col-title{font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+  .doc-sign-grid-single{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;}
+  .doc-sign-grid-single .line{border-bottom:1px solid #9AA5B8;height:24px;}
+  .doc-sign-grid-single .lbl{font-size:10.5px;color:#5B6472;margin-top:3px;letter-spacing:.02em;}
   .doc-foot{text-align:center;font-size:10px;color:#8894A8;margin-top:30px;padding:14px 50px 0;border-top:1px solid #E2E6ED;}
 
   @media print{
@@ -425,6 +430,7 @@
     .proposal-doc-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;}
     .specs-grid{grid-template-columns:1fr;}
     .os-decl-grid{grid-template-columns:1fr;}
+    .doc-sign-cols{grid-template-columns:1fr;gap:16px 0;}
 
     /* Data tables become stacked cards */
     table.rtable thead{display:none;}
@@ -1933,36 +1939,17 @@ function ProposalDocument({prop, settings, total}){
 
         <div className="doc-sec">
           <div className="doc-sec-title"><span className="n">8</span>Aceite da proposta</div>
-          <p className="doc-text">Ao assinar esta proposta, a LOCATÁRIA declara ciência das condições comerciais, operacionais e de segurança, autorizando a emissão do contrato de locação.</p>
-          {prop.assinaturaCliente ? (
-            <div className="doc-signed-block">
-              <img src={prop.assinaturaCliente.imagem} alt="Assinatura" style={{height:70, display:'block', marginBottom:6}}/>
-              <div className="doc-sign-grid" style={{marginTop:4}}>
-                <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{prop.assinaturaCliente.nome}</div><div className="lbl">Nome legível</div></div>
-                <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{prop.assinaturaCliente.cargo||'—'}</div><div className="lbl">Cargo/Função</div></div>
-                <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{prop.assinaturaCliente.cpf||prop.assinaturaCliente.documento||'—'}</div><div className="lbl">Documento</div></div>
-                <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{fmtDateBR(prop.assinaturaCliente.dataHora.slice(0,10))} às {prop.assinaturaCliente.dataHora.slice(11,16)}</div><div className="lbl">Data</div></div>
-              </div>
-              <div className="hint" style={{marginTop:8}}>Assinatura eletrônica coletada dentro do sistema AWP Plataformas.</div>
-              {(prop.assinaturaCliente.ip || prop.assinaturaCliente.userAgent) && (
-                <div style={{marginTop:6, paddingTop:6, borderTop:'1px dashed #E2E6ED', fontSize:9.5, color:'#8894A8', lineHeight:1.5}}>
-                  <b>Trilha de auditoria:</b>{' '}
-                  {prop.assinaturaCliente.ip && <>IP {prop.assinaturaCliente.ip}{prop.assinaturaCliente.localizacao && ` (${prop.assinaturaCliente.localizacao})`} · </>}
-                  {prop.assinaturaCliente.fusoHorario && <>Fuso {prop.assinaturaCliente.fusoHorario} · </>}
-                  {prop.assinaturaCliente.resolucaoTela && <>Tela {prop.assinaturaCliente.resolucaoTela} · </>}
-                  {prop.assinaturaCliente.userAgent && <>Dispositivo: {prop.assinaturaCliente.userAgent.slice(0,90)}</>}
-                </div>
-              )}
+          <p className="doc-text">Ao assinar esta proposta, as partes declaram ciência das condições comerciais, operacionais e de segurança nela descritas, autorizando a emissão do contrato de locação.</p>
+          <div className="doc-sign-cols">
+            <div>
+              <div className="doc-sign-col-title">LOCADORA — AWP Plataformas</div>
+              <SignatureBlock assinatura={prop.assinaturaAwp}/>
             </div>
-          ) : (
-            <div className="doc-sign-grid">
-              <div><div className="line"></div><div className="lbl">Nome legível</div></div>
-              <div><div className="line"></div><div className="lbl">Cargo/Função</div></div>
-              <div><div className="line"></div><div className="lbl">Documento</div></div>
-              <div><div className="line"></div><div className="lbl">Data</div></div>
-              <div className="full"><div className="line"></div><div className="lbl">Assinatura</div></div>
+            <div>
+              <div className="doc-sign-col-title">LOCATÁRIA — Cliente</div>
+              <SignatureBlock assinatura={prop.assinaturaCliente}/>
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -1970,6 +1957,39 @@ function ProposalDocument({prop, settings, total}){
         {settings.tagline}<br/>
         {settings.companyName} | CNPJ {settings.companyCnpj} | {settings.companyAddress}
       </div>
+    </div>
+  );
+}
+
+function SignatureBlock({assinatura}){
+  if(!assinatura){
+    return (
+      <div className="doc-sign-grid-single">
+        <div><div className="line"></div><div className="lbl">Nome legível</div></div>
+        <div><div className="line"></div><div className="lbl">Cargo/Função</div></div>
+        <div><div className="line"></div><div className="lbl">Documento</div></div>
+        <div><div className="line"></div><div className="lbl">Data</div></div>
+      </div>
+    );
+  }
+  return (
+    <div className="doc-signed-block">
+      <img src={assinatura.imagem} alt="Assinatura" style={{height:60, display:'block', marginBottom:6}}/>
+      <div className="doc-sign-grid-single">
+        <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{assinatura.nome}</div><div className="lbl">Nome legível</div></div>
+        <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{assinatura.cargo||'—'}</div><div className="lbl">Cargo/Função</div></div>
+        <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{assinatura.cpf||assinatura.documento||'—'}</div><div className="lbl">Documento</div></div>
+        <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{fmtDateBR(assinatura.dataHora.slice(0,10))} às {assinatura.dataHora.slice(11,16)}</div><div className="lbl">Data</div></div>
+      </div>
+      <div className="hint" style={{marginTop:8, fontSize:9.5}}>Assinatura eletrônica coletada dentro do sistema AWP Plataformas.</div>
+      {(assinatura.ip || assinatura.userAgent) && (
+        <div style={{marginTop:6, paddingTop:6, borderTop:'1px dashed #E2E6ED', fontSize:9, color:'#8894A8', lineHeight:1.5}}>
+          <b>Auditoria:</b>{' '}
+          {assinatura.ip && <>IP {assinatura.ip}{assinatura.localizacao && ` (${assinatura.localizacao})`} · </>}
+          {assinatura.fusoHorario && <>{assinatura.fusoHorario} · </>}
+          {assinatura.resolucaoTela && <>{assinatura.resolucaoTela}</>}
+        </div>
+      )}
     </div>
   );
 }
@@ -2112,10 +2132,11 @@ function SignaturePad({onChange}){
   );
 }
 
-function AssinaturaPresencialModal({prop, onClose, onSave, notify}){
-  const [nome, setNome] = useState(prop.cliente.responsavel || '');
+function AssinaturaPresencialModal({prop, role, currentUser, onClose, onSave, notify}){
+  const isAwp = role === 'awp';
+  const [nome, setNome] = useState(isAwp ? (currentUser || '') : (prop.cliente.responsavel || ''));
   const [cpf, setCpf] = useState('');
-  const [cargo, setCargo] = useState('');
+  const [cargo, setCargo] = useState(isAwp ? 'Consultor AWP Plataformas' : '');
   const [documento, setDocumento] = useState('');
   const [assinaturaImg, setAssinaturaImg] = useState('');
   const [aceite, setAceite] = useState(false);
@@ -2150,25 +2171,30 @@ function AssinaturaPresencialModal({prop, onClose, onSave, notify}){
     if(!aceite){ setError('É necessário confirmar a declaração de ciência para concluir.'); return; }
     setError(''); setSalvando(true);
     const metadados = await coletarMetadados();
+    const assinatura = {
+      nome, cpf, cargo, documento,
+      imagem: assinaturaImg,
+      dataHora: new Date().toISOString(),
+      ...metadados
+    };
     onSave({
       ...prop,
-      assinaturaCliente: {
-        nome, cpf, cargo, documento,
-        imagem: assinaturaImg,
-        dataHora: new Date().toISOString(),
-        ...metadados
-      }
+      [isAwp ? 'assinaturaAwp' : 'assinaturaCliente']: assinatura
     });
     setSalvando(false);
-    notify('Assinatura registrada na proposta, com trilha de auditoria!');
+    notify(`Assinatura ${isAwp ? 'do responsável AWP' : 'do cliente'} registrada, com trilha de auditoria!`);
     onClose();
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" style={{maxWidth:480}} onClick={e=>e.stopPropagation()}>
-        <h3>Assinatura do cliente</h3>
-        <p style={{marginBottom:12}}>Passe o aparelho para o cliente assinar diretamente aqui, na hora do fechamento.</p>
+        <h3>{isAwp ? 'Assinatura do responsável AWP' : 'Assinatura do cliente'}</h3>
+        <p style={{marginBottom:12}}>
+          {isAwp
+            ? 'Assine como responsável pela AWP Plataformas nesta proposta.'
+            : 'Passe o aparelho para o cliente assinar diretamente aqui, na hora do fechamento.'}
+        </p>
         <div className="grid2">
           <div className="field"><label>Nome completo</label><input value={nome} onChange={e=>setNome(e.target.value)}/></div>
           <div className="field"><label>Cargo/Função</label><input value={cargo} onChange={e=>setCargo(e.target.value)}/></div>
@@ -2183,7 +2209,11 @@ function AssinaturaPresencialModal({prop, onClose, onSave, notify}){
         </div>
         <label style={{display:'flex', alignItems:'flex-start', gap:8, fontSize:12.5, margin:'10px 0 14px', cursor:'pointer'}}>
           <input type="checkbox" style={{width:'auto', marginTop:2}} checked={aceite} onChange={e=>setAceite(e.target.checked)}/>
-          <span>Declaro ciência e concordância com as condições comerciais, operacionais e de segurança desta proposta, autorizando a emissão do contrato de locação.</span>
+          <span>
+            {isAwp
+              ? 'Declaro que assino esta proposta como responsável pela AWP Plataformas, confirmando as condições comerciais e operacionais nela descritas.'
+              : 'Declaro ciência e concordância com as condições comerciais, operacionais e de segurança desta proposta, autorizando a emissão do contrato de locação.'}
+          </span>
         </label>
         <div className="hint" style={{marginBottom:10}}>Ao confirmar, o sistema também registra IP, localização aproximada, dispositivo e fuso horário como trilha de auditoria.</div>
         {error && <div className="login-error">{error}</div>}
@@ -2380,13 +2410,13 @@ function LinkAssinaturaModal({prop, settings, onClose, notify}){
   );
 }
 
-function PropostaViewer({current, settings, onBack, onSave, onDuplicate, onRenew, notify}){
+function PropostaViewer({current, settings, currentUser, onBack, onSave, onDuplicate, onRenew, notify}){
   const [generating, setGenerating] = useState(false);
   const [showAssinatura, setShowAssinatura] = useState(false);
   const total = current.itens.reduce((s,it)=> s + itemSubtotal(it), 0);
   const status = current.status || STATUS_OPTIONS[0];
   const podeRenovar = status !== 'Cancelada';
-  const [showAssinaturaPresencial, setShowAssinaturaPresencial] = useState(false);
+  const [assinaturaModo, setAssinaturaModo] = useState(null); // null | 'cliente' | 'awp'
   const [showLinkAssinatura, setShowLinkAssinatura] = useState(false);
   const doDownloadPdf = async () => {
     setGenerating(true);
@@ -2405,8 +2435,11 @@ function PropostaViewer({current, settings, onBack, onSave, onDuplicate, onRenew
           <button className="btn btn-ghost" onClick={onBack}>Voltar</button>
           {podeRenovar && <button className="btn btn-secondary" onClick={onRenew}><IconRefresh width="15" height="15"/>Renovar</button>}
           <button className="btn btn-secondary" onClick={onDuplicate}><IconCopy width="15" height="15"/>Duplicar</button>
-          <button className="btn btn-secondary" onClick={()=>setShowAssinaturaPresencial(true)}>
-            <IconEdit width="15" height="15"/>{current.assinaturaCliente ? 'Ver assinatura' : 'Assinar presencial'}
+          <button className="btn btn-secondary" onClick={()=>setAssinaturaModo('awp')}>
+            <IconEdit width="15" height="15"/>{current.assinaturaAwp ? 'Ver assinatura AWP' : 'Assinar (AWP)'}
+          </button>
+          <button className="btn btn-secondary" onClick={()=>setAssinaturaModo('cliente')}>
+            <IconEdit width="15" height="15"/>{current.assinaturaCliente ? 'Ver assinatura cliente' : 'Assinar presencial (cliente)'}
           </button>
           {!current.assinaturaCliente && (
             <button className="btn btn-secondary" onClick={()=>setShowLinkAssinatura(true)}>
@@ -2434,12 +2467,18 @@ function PropostaViewer({current, settings, onBack, onSave, onDuplicate, onRenew
               <ExpiracaoBadge prop={current}/>
             </div>
           )}
-          {current.assinaturaCliente && (
-            <div>
-              <div className="hint" style={{marginBottom:4}}>Assinatura</div>
-              <span className="badge badge-green">Assinado por {current.assinaturaCliente.nome} em {fmtDateBR(current.assinaturaCliente.dataHora.slice(0,10))}</span>
-            </div>
-          )}
+          <div>
+            <div className="hint" style={{marginBottom:4}}>Assinatura AWP</div>
+            {current.assinaturaAwp
+              ? <span className="badge badge-green">{current.assinaturaAwp.nome} em {fmtDateBR(current.assinaturaAwp.dataHora.slice(0,10))}</span>
+              : <span className="badge badge-gray">Pendente</span>}
+          </div>
+          <div>
+            <div className="hint" style={{marginBottom:4}}>Assinatura Cliente</div>
+            {current.assinaturaCliente
+              ? <span className="badge badge-green">{current.assinaturaCliente.nome} em {fmtDateBR(current.assinaturaCliente.dataHora.slice(0,10))}</span>
+              : <span className="badge badge-gray">Pendente</span>}
+          </div>
           {current.autentiqueDocId && (
             <div>
               <div className="hint" style={{marginBottom:4}}>Link externo (Autentique)</div>
@@ -2468,8 +2507,8 @@ function PropostaViewer({current, settings, onBack, onSave, onDuplicate, onRenew
         <AssinaturaModal prop={current} settings={settings} onClose={()=>setShowAssinatura(false)}
           onSave={(updated)=>onSave(updated)} notify={notify}/>
       )}
-      {showAssinaturaPresencial && (
-        <AssinaturaPresencialModal prop={current} onClose={()=>setShowAssinaturaPresencial(false)}
+      {assinaturaModo && (
+        <AssinaturaPresencialModal prop={current} role={assinaturaModo} currentUser={currentUser} onClose={()=>setAssinaturaModo(null)}
           onSave={(updated)=>onSave(updated)} notify={notify}/>
       )}
       {showLinkAssinatura && (
@@ -2604,7 +2643,7 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
   if(mode==='view' && current){
     const total = current.itens.reduce((s,it)=> s + itemSubtotal(it), 0);
     return <>
-      <PropostaViewer current={current} settings={settings} onBack={()=>setMode('list')} notify={notify}
+      <PropostaViewer current={current} settings={settings} currentUser={currentUser} onBack={()=>setMode('list')} notify={notify}
         onSave={(updated)=>{ onSaveProposal(updated); setCurrent(updated); }}
         onDuplicate={()=>{
           const dup = {...current, id:null, numero:String(settings.nextProposalNumber||1), data: todayISO(), createdAt:null,
