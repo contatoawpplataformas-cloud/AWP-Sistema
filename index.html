@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AWP Plataformas — Sistema de Locação</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Dancing+Script:wght@500;700&family=Great+Vibes&family=Sacramento&display=swap" rel="stylesheet">
 <style>
   :root{
     --navy:#0F2A4A;
@@ -307,6 +307,25 @@
   .login-selected b{flex:1;text-align:left;font-size:14px;}
   .login-pass .field{text-align:left;}
   .login-error{color:var(--danger);font-size:12.5px;margin-bottom:12px;text-align:left;}
+
+  /* ---------- Assinatura: geração a partir do nome (estilo Autentique) ---------- */
+  .sig-mode-tabs{display:flex;gap:8px;margin-bottom:10px;}
+  .sig-mode-tabs button{
+    flex:1;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;
+    cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--muted);
+  }
+  .sig-mode-tabs button.active{background:var(--blue-light);color:var(--blue);border-color:var(--blue);}
+  .sig-style-tabs{display:flex;gap:8px;flex-wrap:wrap;}
+  .sig-style-btn{
+    flex:1;min-width:150px;padding:14px 10px;border-radius:8px;border:1.5px solid var(--border);
+    background:#FAFBFD;cursor:pointer;font-size:24px;color:#182233;text-align:center;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .sig-style-btn.active{border-color:var(--blue);background:var(--blue-light);box-shadow:0 0 0 1px var(--blue) inset;}
+  .sig-preview-box{
+    border:1px dashed var(--border);border-radius:8px;padding:20px;text-align:center;
+    min-height:90px;display:flex;align-items:center;justify-content:center;background:#FAFBFD;
+  }
   .link-btn{background:none;border:none;color:var(--blue);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:underline;}
 
   .topbar-user{display:flex;align-items:center;gap:8px;padding:11px 18px;border-top:1px solid rgba(255,255,255,.08);}
@@ -1958,6 +1977,74 @@ function ProposalDocument({prop, settings, total}){
 /* ==================================================================== */
 /* ASSINATURA PRESENCIAL (captura direto no app, sem depender de serviço externo) */
 /* ==================================================================== */
+const SIGNATURE_FONTS = [
+  { id: 'dancing', label: 'Elegante', family: "'Dancing Script', cursive" },
+  { id: 'vibes', label: 'Clássica', family: "'Great Vibes', cursive" },
+  { id: 'sacramento', label: 'Moderna', family: "'Sacramento', cursive" },
+];
+
+function renderTextSignature(text, fontFamily){
+  const canvas = document.createElement('canvas');
+  canvas.width = 560; canvas.height = 200;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#182233';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  let fontSize = 68;
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  while(ctx.measureText(text).width > canvas.width - 50 && fontSize > 22){
+    fontSize -= 2;
+    ctx.font = `${fontSize}px ${fontFamily}`;
+  }
+  ctx.fillText(text, canvas.width/2, canvas.height/2 + 6);
+  return canvas.toDataURL('image/png');
+}
+
+function SignatureCapture({nome, onChange}){
+  const [mode, setMode] = useState('typed'); // 'typed' | 'draw'
+  const [fontId, setFontId] = useState(SIGNATURE_FONTS[0].id);
+  const font = SIGNATURE_FONTS.find(f=>f.id===fontId);
+
+  useEffect(()=>{
+    if(mode !== 'typed') return;
+    let cancelled = false;
+    (async () => {
+      if(!nome || !nome.trim()){ onChange(''); return; }
+      try{ await document.fonts.load(`64px ${font.family}`); }catch(e){}
+      if(cancelled) return;
+      onChange(renderTextSignature(nome.trim(), font.family));
+    })();
+    return () => { cancelled = true; };
+  }, [nome, fontId, mode]);
+
+  return (
+    <div>
+      <div className="sig-mode-tabs">
+        <button type="button" className={mode==='typed' ? 'active' : ''} onClick={()=>setMode('typed')}>✒️ Gerar do nome</button>
+        <button type="button" className={mode==='draw' ? 'active' : ''} onClick={()=>{setMode('draw'); onChange('');}}>✍️ Desenhar</button>
+      </div>
+      {mode==='typed' ? (
+        !nome || !nome.trim() ? (
+          <div className="sig-preview-box"><span className="hint">Digite o nome completo acima para gerar a assinatura</span></div>
+        ) : (
+          <div className="sig-style-tabs">
+            {SIGNATURE_FONTS.map(f=>(
+              <button key={f.id} type="button"
+                className={`sig-style-btn ${fontId===f.id ? 'active' : ''}`}
+                onClick={()=>setFontId(f.id)} style={{fontFamily:f.family}}>
+                {nome}
+              </button>
+            ))}
+          </div>
+        )
+      ) : (
+        <SignaturePad onChange={onChange}/>
+      )}
+    </div>
+  );
+}
+
 function SignaturePad({onChange}){
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
@@ -2092,7 +2179,7 @@ function AssinaturaPresencialModal({prop, onClose, onSave, notify}){
         </div>
         <div className="field">
           <label>Assinatura</label>
-          <SignaturePad onChange={setAssinaturaImg}/>
+          <SignatureCapture nome={nome} onChange={setAssinaturaImg}/>
         </div>
         <label style={{display:'flex', alignItems:'flex-start', gap:8, fontSize:12.5, margin:'10px 0 14px', cursor:'pointer'}}>
           <input type="checkbox" style={{width:'auto', marginTop:2}} checked={aceite} onChange={e=>setAceite(e.target.checked)}/>
@@ -3930,7 +4017,7 @@ function PublicSignPage({shareId}){
           </div>
           <div className="field">
             <label>Assinatura</label>
-            <SignaturePad onChange={setAssinaturaImg}/>
+            <SignatureCapture nome={nome} onChange={setAssinaturaImg}/>
           </div>
           <label style={{display:'flex', alignItems:'flex-start', gap:8, fontSize:12.5, margin:'10px 0 14px', cursor:'pointer'}}>
             <input type="checkbox" style={{width:'auto', marginTop:2}} checked={aceite} onChange={e=>setAceite(e.target.checked)}/>
