@@ -476,6 +476,16 @@ const { useState, useEffect, useRef, useMemo } = React;
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const todayISO = () => new Date().toISOString().slice(0,10);
 const fmtDateBR = (iso) => { if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; };
+// Converte um timestamp ISO (salvo em UTC) para data/hora no fuso do navegador de quem está vendo (ex: Brasília)
+const fmtDataHoraLocal = (isoString) => {
+  if(!isoString) return { data:'', hora:'' };
+  const d = new Date(isoString);
+  if(isNaN(d.getTime())) return { data:'', hora:'' };
+  return {
+    data: d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' }),
+    hora: d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' })
+  };
+};
 const fmtMoney = (n) => {
   const v = parseFloat(n);
   if (isNaN(v)) return 'R$ 0,00';
@@ -1979,7 +1989,7 @@ function SignatureBlock({assinatura}){
         <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{assinatura.nome}</div><div className="lbl">Nome legível</div></div>
         <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{assinatura.cargo||'—'}</div><div className="lbl">Cargo/Função</div></div>
         <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{assinatura.cpf||assinatura.documento||'—'}</div><div className="lbl">Documento</div></div>
-        <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{fmtDateBR(assinatura.dataHora.slice(0,10))} às {assinatura.dataHora.slice(11,16)}</div><div className="lbl">Data</div></div>
+        <div><div className="lbl" style={{marginTop:0, fontWeight:600, color:'var(--navy)'}}>{fmtDataHoraLocal(assinatura.dataHora).data} às {fmtDataHoraLocal(assinatura.dataHora).hora}</div><div className="lbl">Data</div></div>
       </div>
       <div className="hint" style={{marginTop:8, fontSize:9.5}}>Assinatura eletrônica coletada dentro do sistema AWP Plataformas.</div>
       {(assinatura.ip || assinatura.userAgent) && (
@@ -2470,13 +2480,13 @@ function PropostaViewer({current, settings, currentUser, onBack, onSave, onDupli
           <div>
             <div className="hint" style={{marginBottom:4}}>Assinatura AWP</div>
             {current.assinaturaAwp
-              ? <span className="badge badge-green">{current.assinaturaAwp.nome} em {fmtDateBR(current.assinaturaAwp.dataHora.slice(0,10))}</span>
+              ? <span className="badge badge-green">{current.assinaturaAwp.nome} em {fmtDataHoraLocal(current.assinaturaAwp.dataHora).data}</span>
               : <span className="badge badge-gray">Pendente</span>}
           </div>
           <div>
             <div className="hint" style={{marginBottom:4}}>Assinatura Cliente</div>
             {current.assinaturaCliente
-              ? <span className="badge badge-green">{current.assinaturaCliente.nome} em {fmtDateBR(current.assinaturaCliente.dataHora.slice(0,10))}</span>
+              ? <span className="badge badge-green">{current.assinaturaCliente.nome} em {fmtDataHoraLocal(current.assinaturaCliente.dataHora).data}</span>
               : <span className="badge badge-gray">Pendente</span>}
           </div>
           {current.autentiqueDocId && (
@@ -2561,7 +2571,7 @@ function AssinaturasRecebidas({proposals, onSaveProposal, notify}){
             <img src={item.assinaturaCliente.imagem} alt="assinatura" style={{height:36, background:'#fff', border:'1px solid var(--border)', borderRadius:4, padding:2}}/>
             <div style={{flex:1, minWidth:160}}>
               <b>{item.assinaturaCliente.nome}</b>
-              <div className="hint">Proposta nº {item.numero} — {item.clienteNome} · {fmtDateBR(item.assinaturaCliente.dataHora.slice(0,10))}</div>
+              <div className="hint">Proposta nº {item.numero} — {item.clienteNome} · {fmtDataHoraLocal(item.assinaturaCliente.dataHora).data}</div>
             </div>
             <div style={{display:'flex', gap:6}}>
               <button className="btn btn-ghost btn-sm" onClick={()=>descartar(item)}>Descartar</button>
