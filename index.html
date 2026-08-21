@@ -2428,6 +2428,7 @@ function PropostaViewer({current, settings, currentUser, onBack, onSave, onDupli
   const podeRenovar = status !== 'Cancelada';
   const [assinaturaModo, setAssinaturaModo] = useState(null); // null | 'cliente' | 'awp'
   const [showLinkAssinatura, setShowLinkAssinatura] = useState(false);
+  const [confirmRemoverAssinatura, setConfirmRemoverAssinatura] = useState(null); // 'awp' | 'cliente' | null
   const doDownloadPdf = async () => {
     setGenerating(true);
     const ok = await gerarPdfDoNode('proposal-doc-content', `proposta-${current.numero}-${(current.cliente.razaoSocial||'cliente').slice(0,30)}.pdf`, (msg)=>notify(msg));
@@ -2479,15 +2480,23 @@ function PropostaViewer({current, settings, currentUser, onBack, onSave, onDupli
           )}
           <div>
             <div className="hint" style={{marginBottom:4}}>Assinatura AWP</div>
-            {current.assinaturaAwp
-              ? <span className="badge badge-green">{current.assinaturaAwp.nome} em {fmtDataHoraLocal(current.assinaturaAwp.dataHora).data}</span>
-              : <span className="badge badge-gray">Pendente</span>}
+            {current.assinaturaAwp ? (
+              <span className="badge badge-green" style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                {current.assinaturaAwp.nome} em {fmtDataHoraLocal(current.assinaturaAwp.dataHora).data}
+                <button type="button" onClick={()=>setConfirmRemoverAssinatura('awp')} title="Remover assinatura"
+                  style={{background:'none', border:'none', padding:0, cursor:'pointer', color:'inherit', opacity:.6, lineHeight:1, fontSize:13}}>✕</button>
+              </span>
+            ) : <span className="badge badge-gray">Pendente</span>}
           </div>
           <div>
             <div className="hint" style={{marginBottom:4}}>Assinatura Cliente</div>
-            {current.assinaturaCliente
-              ? <span className="badge badge-green">{current.assinaturaCliente.nome} em {fmtDataHoraLocal(current.assinaturaCliente.dataHora).data}</span>
-              : <span className="badge badge-gray">Pendente</span>}
+            {current.assinaturaCliente ? (
+              <span className="badge badge-green" style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                {current.assinaturaCliente.nome} em {fmtDataHoraLocal(current.assinaturaCliente.dataHora).data}
+                <button type="button" onClick={()=>setConfirmRemoverAssinatura('cliente')} title="Remover assinatura"
+                  style={{background:'none', border:'none', padding:0, cursor:'pointer', color:'inherit', opacity:.6, lineHeight:1, fontSize:13}}>✕</button>
+              </span>
+            ) : <span className="badge badge-gray">Pendente</span>}
           </div>
           {current.autentiqueDocId && (
             <div>
@@ -2524,6 +2533,20 @@ function PropostaViewer({current, settings, currentUser, onBack, onSave, onDupli
       {showLinkAssinatura && (
         <LinkAssinaturaModal prop={current} settings={settings} onClose={()=>setShowLinkAssinatura(false)} notify={notify}/>
       )}
+      <ConfirmModal
+        open={!!confirmRemoverAssinatura}
+        title="Remover assinatura"
+        text={confirmRemoverAssinatura==='awp'
+          ? 'Isso remove a assinatura do responsável AWP, voltando o status para "Pendente". Não pode ser desfeito.'
+          : 'Isso remove a assinatura do cliente, voltando o status para "Pendente". Não pode ser desfeito.'}
+        onConfirm={()=>{
+          const campo = confirmRemoverAssinatura==='awp' ? 'assinaturaAwp' : 'assinaturaCliente';
+          onSave({...current, [campo]: null});
+          notify('Assinatura removida.');
+          setConfirmRemoverAssinatura(null);
+        }}
+        onCancel={()=>setConfirmRemoverAssinatura(null)}
+      />
     </div>
   );
 }
