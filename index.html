@@ -499,29 +499,72 @@ const parseMoneyInput = (v) => {
 };
 const itemSubtotal = (it) => parseMoneyInput(it.valorLocacao) + parseMoneyInput(it.seguro) + parseMoneyInput(it.frete);
 
-async function gerarPdfBlobDoNode(nodeId){
-  const node = document.getElementById(nodeId);
-  if(!node || !window.html2canvas || !window.jspdf){
-    throw new Error('Biblioteca de PDF ainda não carregou. Aguarde alguns segundos e tente novamente.');
-  }
+// Elementos que nunca devem ser cortados ao meio entre duas páginas do PDF
+const PDF_AVOID_SPLIT_SELECTOR = 'tr, .spec-card, .doc-signed-block, .doc-sign-cols, .os-row, .os-footer-grid .frow, .os-text-block, .doc-total-box';
+
+async function renderizarPaginasPdf(node){
   const canvas = await window.html2canvas(node, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
-  const imgData = canvas.toDataURL('image/jpeg', 0.95);
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF('p', 'mm', 'a4');
   const pdfWidth = pdf.internal.pageSize.getWidth();
   const pdfHeight = pdf.internal.pageSize.getHeight();
   const imgWidth = pdfWidth;
-  const imgHeight = canvas.height * imgWidth / canvas.width;
-  let heightLeft = imgHeight;
-  let position = 0;
-  pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-  heightLeft -= pdfHeight;
-  while(heightLeft > 0){
-    position = heightLeft - imgHeight;
-    pdf.addPage();
-    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pdfHeight;
+  const totalHeightMm = canvas.height * imgWidth / canvas.width;
+  const pxPerMm = canvas.height / totalHeightMm;
+  const pageHeightPx = pdfHeight * pxPerMm;
+
+  // Mapeia, em pixels do canvas, as faixas de todo elemento que não pode ser dividido entre páginas
+  const nodeRect = node.getBoundingClientRect();
+  const scale = canvas.width / node.offsetWidth;
+  const avoidRanges = Array.from(node.querySelectorAll(PDF_AVOID_SPLIT_SELECTOR)).map(el => {
+    const r = el.getBoundingClientRect();
+    return {
+      top: (r.top - nodeRect.top) * scale,
+      bottom: (r.bottom - nodeRect.top) * scale
+    };
+  }).filter(r => r.bottom > r.top);
+
+  // Calcula os pontos de corte de cada página, empurrando o corte pra cima quando ele cairia em cima de um elemento protegido
+  const cortes = [];
+  let cursor = 0;
+  while(cursor < canvas.height - 1){
+    let corte = Math.min(cursor + pageHeightPx, canvas.height);
+    if(corte < canvas.height){
+      for(const r of avoidRanges){
+        if(r.top < corte && r.bottom > corte && r.top > cursor + 4){
+          corte = r.top;
+        }
+      }
+      if(corte <= cursor) corte = Math.min(cursor + pageHeightPx, canvas.height); // segurança contra loop infinito
+    }
+    cortes.push([cursor, corte]);
+    cursor = corte;
   }
+
+  cortes.forEach(([top, bottom], i) => {
+    const sliceHeightPx = Math.max(1, Math.round(bottom - top));
+    const sliceCanvas = document.createElement('canvas');
+    sliceCanvas.width = canvas.width;
+    sliceCanvas.height = sliceHeightPx;
+    const ctx = sliceCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+    ctx.drawImage(canvas, 0, top, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+    const sliceImgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
+    const sliceHeightMm = sliceHeightPx / pxPerMm;
+    if(i > 0) pdf.addPage();
+    pdf.addImage(sliceImgData, 'JPEG', 0, 0, imgWidth, sliceHeightMm);
+  });
+
+  return pdf;
+}
+
+async function gerarPdfBlobDoNode(nodeId){
+  const node = document.getElementById(nodeId);
+  if(!node || !window.html2canvas || !window.jspdf){
+    throw new Error('Biblioteca de PDF ainda não carregou. Aguarde alguns segundos e tente novamente.');
+  }
+  const pdf = await renderizarPaginasPdf(node);
   return pdf.output('blob');
 }
 
@@ -532,24 +575,7 @@ async function gerarPdfDoNode(nodeId, filename, onError){
       onError && onError('Biblioteca de PDF ainda não carregou. Aguarde alguns segundos e tente novamente.');
       return false;
     }
-    const canvas = await window.html2canvas(node, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = pdfWidth;
-    const imgHeight = canvas.height * imgWidth / canvas.width;
-    let heightLeft = imgHeight;
-    let position = 0;
-    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pdfHeight;
-    while(heightLeft > 0){
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pdfHeight;
-    }
+    const pdf = await renderizarPaginasPdf(node);
     pdf.save(filename);
     return true;
   }catch(e){
@@ -650,6 +676,14 @@ const DEFAULT_SETTINGS = {
   autentiqueProxyUrl: '',
   nextProposalNumber: 1,
   nextOsNumber: 1,
+  nextFaturaNumber: 1,
+  companyEmailFinanceiro: 'financeiro.awpplataformas@gmail.com',
+  defaultDadosPagamento: 'Via boleto bancário em anexo.',
+  defaultObservacoesFatura: [
+    'Pagamento sujeito às condições comerciais previamente aprovadas.',
+    'Em caso de atraso poderão incidir juros, multa e correção monetária conforme contrato.',
+    'Equipamento locado conforme proposta comercial e contrato firmado entre as partes.'
+  ].join('\n'),
   defaultValidade: '10 dias a contar da emissão',
   defaultConsultor: '',
   defaultTransporte: 'Por conta do cliente.',
@@ -745,6 +779,7 @@ const IconLogOut = (p)=><Icon d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l
 const IconDownload = (p)=><Icon d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3" {...p}/>;
 const IconClipboard = (p)=><Icon d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2 M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" {...p}/>;
 const IconUpload = (p)=><Icon d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12" {...p}/>;
+const IconReceipt = (p)=><Icon d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1z M8 7h8 M8 11h8 M8 15h5" {...p}/>;
 
 /* Scissor-lift arm brand mark: crossing diagonal struts, like a scissor mechanism */
 const BrandMark = ({size=34}) => (
@@ -912,12 +947,13 @@ async function loadAppData(){
         machines: parsed.machines || [],
         proposals: parsed.proposals || [],
         os: parsed.os || [],
+        faturas: parsed.faturas || [],
         users: (parsed.users && parsed.users.length) ? parsed.users : USERS,
         settings: { ...DEFAULT_SETTINGS, ...(parsed.settings||{}) }
       };
     }
   }catch(e){ /* key not found yet */ }
-  return { clients:[], machines:[], proposals:[], os:[], users:[...USERS], settings: {...DEFAULT_SETTINGS} };
+  return { clients:[], machines:[], proposals:[], os:[], faturas:[], users:[...USERS], settings: {...DEFAULT_SETTINGS} };
 }
 async function persist(data){
   try{
@@ -960,6 +996,7 @@ function normalizeCloudData(raw){
     machines: raw.machines || [],
     proposals: raw.proposals || [],
     os: raw.os || [],
+    faturas: raw.faturas || [],
     users: (raw.users && raw.users.length) ? raw.users : USERS,
     settings: { ...DEFAULT_SETTINGS, ...(raw.settings||{}) }
   };
@@ -1455,20 +1492,81 @@ function ExpiracaoBadge({prop}){
   return <span className={`badge ${cls}`} title={`Vencimento: ${fmtDateBR(exp)}`}>{label}</span>;
 }
 
-function RenewModal({prop, onClose, onConfirm}){
-  const currentExp = getExpiracao(prop);
-  const [novaData, setNovaData] = useState(currentExp || todayISO());
-  const [nota, setNota] = useState('');
+function RenovacaoModal({prop, proposals, settings, currentUser, onClose, onConfirm}){
+  const numeroBase = prop.numeroBase || prop.numero;
+  const proximaRev = proposals.filter(p => (p.numeroBase||p.numero)===numeroBase && p.propostaOrigemId).length + 1;
+  const novoNumero = `${numeroBase}-REV${proximaRev}`;
+
+  const [itens, setItens] = useState(() => prop.itens.map(it => ({
+    ...it, lineId: uid(), periodoInicio: '', periodoFim: ''
+  })));
+  const [consultor, setConsultor] = useState(currentUser || prop.consultor || '');
+  const [error, setError] = useState('');
+
+  const updateItem = (lineId, k, v) => setItens(prev => prev.map(it => it.lineId===lineId ? {...it, [k]:v} : it));
+  const total = itens.reduce((s,it)=> s + itemSubtotal(it), 0);
+
+  const confirmar = () => {
+    if(itens.some(it => !it.periodoInicio || !it.periodoFim)){
+      setError('Preencha o novo período de todos os itens.');
+      return;
+    }
+    setError('');
+    const maxFim = itens.reduce((max,it)=> (it.periodoFim > max ? it.periodoFim : max), itens[0].periodoFim);
+    onConfirm({
+      id: null,
+      numero: novoNumero,
+      numeroBase,
+      propostaOrigemId: prop.id,
+      data: todayISO(),
+      validade: settings.defaultValidade,
+      consultor,
+      clienteId: prop.clienteId,
+      cliente: prop.cliente,
+      itens,
+      transporte: prop.transporte, prazoEntrega: prop.prazoEntrega, pagamento: prop.pagamento,
+      textoEntrega: prop.textoEntrega, textoDevolucao: prop.textoDevolucao,
+      status: 'Efetivada em andamento',
+      dataExpiracao: maxFim,
+      renewalHistory: [],
+      sublocacao: prop.sublocacao||false, fornecedorSublocacao: prop.fornecedorSublocacao||'',
+      autentiqueDocId:'', autentiqueLink:'', autentiqueStatus:'', autentiqueEnviadoEm:'',
+      assinaturaAwp: null, assinaturaCliente: null,
+      createdAt: null
+    });
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={e=>e.stopPropagation()}>
-        <h3>Renovar locação — Proposta nº {prop.numero}</h3>
-        <p>Data de expiração atual: <b>{currentExp ? fmtDateBR(currentExp) : 'não definida'}</b>. Ao confirmar, a mesma proposta continua ativa com a nova data — nenhuma proposta nova é criada.</p>
-        <div className="field"><label>Nova data de expiração</label><input type="date" value={novaData} onChange={e=>setNovaData(e.target.value)}/></div>
-        <div className="field"><label>Observação (opcional)</label><input value={nota} onChange={e=>setNota(e.target.value)} placeholder="Ex: renovado por mais 30 dias"/></div>
-        <div className="row">
+      <div className="modal" style={{maxWidth:640}} onClick={e=>e.stopPropagation()}>
+        <h3>Renovar locação — gerar {novoNumero}</h3>
+        <p style={{marginBottom:12, fontSize:13}}>
+          Isso cria uma <b>proposta nova</b> ({novoNumero}), vinculada à proposta nº {prop.numero}, com o período e os valores que você definir abaixo —
+          a proposta original não é alterada. A nova proposta é independente: gera seu próprio PDF e precisa de assinatura própria.
+        </p>
+        <div className="field"><label>Consultor responsável</label><input value={consultor} onChange={e=>setConsultor(e.target.value)}/></div>
+        {itens.map((it)=>(
+          <div className="item-row-card" key={it.lineId}>
+            <b style={{fontSize:12.5}}>{it.tipo} – {it.modelo}</b>
+            <div className="grid2" style={{marginTop:8}}>
+              <div className="field"><label>Novo início</label><input type="date" value={it.periodoInicio} onChange={e=>updateItem(it.lineId,'periodoInicio',e.target.value)}/></div>
+              <div className="field"><label>Novo fim</label><input type="date" value={it.periodoFim} onChange={e=>updateItem(it.lineId,'periodoFim',e.target.value)}/></div>
+            </div>
+            <div className="grid3">
+              <div className="field"><label>Valor locação (R$)</label><input value={it.valorLocacao} onChange={e=>updateItem(it.lineId,'valorLocacao',e.target.value)}/></div>
+              <div className="field"><label>Seguro (R$)</label><input value={it.seguro} onChange={e=>updateItem(it.lineId,'seguro',e.target.value)} placeholder="Deixe em branco se não houver"/></div>
+              <div className="field"><label>Frete (R$)</label><input value={it.frete} onChange={e=>updateItem(it.lineId,'frete',e.target.value)} placeholder="Deixe em branco se não houver"/></div>
+            </div>
+          </div>
+        ))}
+        <div className="total-bar" style={{background:'var(--blue-light)', borderRadius:8}}>
+          <span className="label">Novo total</span>
+          <span className="value">{fmtMoney(total)}</span>
+        </div>
+        {error && <div className="login-error" style={{marginTop:10}}>{error}</div>}
+        <div className="row" style={{marginTop:14}}>
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" disabled={!novaData} onClick={()=>onConfirm(novaData, nota)}>Confirmar renovação</button>
+          <button className="btn btn-primary" onClick={confirmar}>Gerar proposta de renovação</button>
         </div>
       </div>
     </div>
@@ -1523,6 +1621,10 @@ function novaProposta(settings, clients){
     autentiqueLink: '',
     autentiqueStatus: '',
     autentiqueEnviadoEm: '',
+    numeroBase: String(settings.nextProposalNumber || 1),
+    propostaOrigemId: null,
+    assinaturaAwp: null,
+    assinaturaCliente: null,
     createdAt: null
   };
 }
@@ -2420,7 +2522,7 @@ function LinkAssinaturaModal({prop, settings, onClose, notify}){
   );
 }
 
-function PropostaViewer({current, settings, currentUser, onBack, onSave, onDuplicate, onRenew, notify}){
+function PropostaViewer({current, settings, currentUser, proposals, faturas, onOpenRelated, onGoToFatura, onBack, onSave, onDuplicate, onRenew, notify}){
   const [generating, setGenerating] = useState(false);
   const [showAssinatura, setShowAssinatura] = useState(false);
   const total = current.itens.reduce((s,it)=> s + itemSubtotal(it), 0);
@@ -2460,11 +2562,45 @@ function PropostaViewer({current, settings, currentUser, onBack, onSave, onDupli
           <button className="btn btn-secondary" onClick={()=>setShowAssinatura(true)}>
             {current.autentiqueDocId ? 'Ver link externo' : 'Enviar link externo'}
           </button>
+          {faturas && faturas.some(f=>f.propostaId===current.id) && (
+            <button className="btn btn-secondary" onClick={()=>onGoToFatura(faturas.find(f=>f.propostaId===current.id).id)}>
+              <IconReceipt width="15" height="15"/>Ver fatura
+            </button>
+          )}
           <button className="btn btn-primary" onClick={doDownloadPdf} disabled={generating}>
             <IconDownload width="15" height="15"/>{generating ? 'Gerando PDF...' : 'Baixar PDF'}
           </button>
         </div>
       </div>
+
+      {(current.propostaOrigemId || (proposals && proposals.some(p=>p.propostaOrigemId===current.id))) && (
+        <div className="card no-print" style={{marginBottom:16, borderLeft:'4px solid var(--blue)'}}>
+          <div className="card-body" style={{display:'flex', flexDirection:'column', gap:8}}>
+            {current.propostaOrigemId && (() => {
+              const origem = proposals.find(p=>p.id===current.propostaOrigemId);
+              return (
+                <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                  <IconRefresh width="15" height="15" style={{color:'var(--blue)'}}/>
+                  <span style={{fontSize:13}}>Esta é uma renovação da proposta {origem ? <b>nº {origem.numero}</b> : 'original (não encontrada)'}.</span>
+                  {origem && <button className="btn btn-ghost btn-sm" onClick={()=>onOpenRelated(origem.id)}>Ver proposta original</button>}
+                </div>
+              );
+            })()}
+            {proposals && proposals.filter(p=>p.propostaOrigemId===current.id).length>0 && (
+              <div>
+                <div style={{fontSize:13, marginBottom:6}}>Renovações desta proposta:</div>
+                <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+                  {proposals.filter(p=>p.propostaOrigemId===current.id).map(r=>(
+                    <button key={r.id} className="btn btn-secondary btn-sm" onClick={()=>onOpenRelated(r.id)}>
+                      {r.numero} <StatusBadge status={r.status||STATUS_OPTIONS[0]}/>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card no-print" style={{marginBottom:16}}>
         <div className="card-body" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
@@ -2607,7 +2743,7 @@ function AssinaturasRecebidas({proposals, onSaveProposal, notify}){
   );
 }
 
-function PropostasTab({proposals, clients, machines, settings, currentUser, onSaveProposal, onDeleteProposal, notify}){
+function PropostasTab({proposals, clients, machines, settings, currentUser, faturas, onSaveProposal, onDeleteProposal, onGoToFatura, notify}){
   const [mode, setMode] = useState('list'); // list | new | view
   const [current, setCurrent] = useState(null);
   const [query, setQuery] = useState('');
@@ -2626,18 +2762,10 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
 
   const urgentCount = proposals.filter(p=>isUrgente(p)).length;
 
-  const applyRenewal = (novaData, nota) => {
-    const prop = renewing;
-    const updated = {
-      ...prop,
-      dataExpiracao: novaData,
-      status: 'Efetivada em andamento',
-      renewalHistory: [...(prop.renewalHistory||[]), { date: new Date().toISOString(), from: getExpiracao(prop), to: novaData, nota, user: currentUser }]
-    };
-    onSaveProposal(updated);
+  const iniciarRenovacao = (draft) => {
     setRenewing(null);
-    notify(`Proposta nº ${prop.numero} renovada até ${fmtDateBR(novaData)}.`);
-    if(current && current.id===prop.id) setCurrent(updated);
+    setCurrent(draft);
+    setMode('edit');
   };
 
   const changeStatusQuick = (p, newStatus) => {
@@ -2654,7 +2782,7 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
       onSave={(prop)=>{
         onSaveProposal(prop);
         setMode('list');
-        notify(`Proposta nº ${prop.numero} salva com sucesso.`);
+        notify(`Proposta nº ${prop.numero} salva com sucesso — fatura gerada automaticamente.`);
       }}
     />;
   }
@@ -2666,9 +2794,10 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
       onCancel={()=>setMode('list')}
       notify={notify}
       onSave={(prop)=>{
+        const eraNova = !prop.id;
         onSaveProposal(prop);
         setMode('list');
-        notify(`Proposta nº ${prop.numero} atualizada.`);
+        notify(eraNova ? `Proposta nº ${prop.numero} salva com sucesso — fatura gerada automaticamente.` : `Proposta nº ${prop.numero} atualizada.`);
       }}
     />;
   }
@@ -2676,18 +2805,21 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
   if(mode==='view' && current){
     const total = current.itens.reduce((s,it)=> s + itemSubtotal(it), 0);
     return <>
-      <PropostaViewer current={current} settings={settings} currentUser={currentUser} onBack={()=>setMode('list')} notify={notify}
+      <PropostaViewer current={current} settings={settings} currentUser={currentUser} proposals={proposals} faturas={faturas} onGoToFatura={onGoToFatura} onBack={()=>setMode('list')} notify={notify}
         onSave={(updated)=>{ onSaveProposal(updated); setCurrent(updated); }}
+        onOpenRelated={(id)=>{ const p = proposals.find(x=>x.id===id); if(p) setCurrent(p); }}
         onDuplicate={()=>{
-          const dup = {...current, id:null, numero:String(settings.nextProposalNumber||1), data: todayISO(), createdAt:null,
+          const novoNum = String(settings.nextProposalNumber||1);
+          const dup = {...current, id:null, numero:novoNum, numeroBase:novoNum, propostaOrigemId:null, data: todayISO(), createdAt:null,
             status: STATUS_OPTIONS[0], dataExpiracao:'', renewalHistory:[],
             autentiqueDocId:'', autentiqueLink:'', autentiqueStatus:'', autentiqueEnviadoEm:'',
+            assinaturaAwp:null, assinaturaCliente:null,
             itens: current.itens.map(it=>({...it, lineId: uid()}))};
           setCurrent(dup); setMode('edit');
         }}
         onRenew={()=>setRenewing(current)}
       />
-      {renewing && <RenewModal prop={renewing} onClose={()=>setRenewing(null)} onConfirm={applyRenewal}/>}
+      {renewing && <RenovacaoModal prop={renewing} proposals={proposals} settings={settings} currentUser={currentUser} onClose={()=>setRenewing(null)} onConfirm={iniciarRenovacao}/>}
     </>;
   }
 
@@ -2734,6 +2866,7 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
                     <td className="mono" data-label="Nº">#{p.numero}<div className="hint">{fmtDateBR(p.data)}</div></td>
                     <td data-label="Cliente"><b>{p.cliente.razaoSocial}</b>
                       <div style={{display:'flex', gap:4, flexWrap:'wrap', marginTop:3}}>
+                        {p.propostaOrigemId && <span className="badge badge-blue">Renovação</span>}
                         {p.sublocacao && <span className="badge badge-purple">Sublocação</span>}
                         {p.assinaturaCliente && <span className="badge badge-green">Assinado</span>}
                       </div>
@@ -2768,7 +2901,7 @@ function PropostasTab({proposals, clients, machines, settings, currentUser, onSa
         onConfirm={()=>{ onDeleteProposal(confirmDel.id); notify('Proposta excluída.'); setConfirmDel(null); }}
         onCancel={()=>setConfirmDel(null)}
       />
-      {renewing && <RenewModal prop={renewing} onClose={()=>setRenewing(null)} onConfirm={applyRenewal}/>}
+      {renewing && <RenovacaoModal prop={renewing} proposals={proposals} settings={settings} currentUser={currentUser} onClose={()=>setRenewing(null)} onConfirm={iniciarRenovacao}/>}
     </div>
   );
 }
@@ -3434,6 +3567,379 @@ function FaturamentoTab({proposals}){
 /* ==================================================================== */
 /* CONFIGURAÇÕES */
 /* ==================================================================== */
+/* ==================================================================== */
+/* FATURA DE LOCAÇÃO — gerada automaticamente a cada proposta (e renovação) */
+/* ==================================================================== */
+const FATURA_STATUS_OPTIONS = ['Pendente', 'Paga', 'Vencida', 'Cancelada'];
+const FATURA_STATUS_CLASS = {
+  'Pendente': 'badge-orange',
+  'Paga': 'badge-green',
+  'Vencida': 'badge-red',
+  'Cancelada': 'badge-gray',
+};
+function FaturaStatusBadge({status}){
+  const s = status || FATURA_STATUS_OPTIONS[0];
+  return <span className={`badge ${FATURA_STATUS_CLASS[s] || 'badge-gray'}`}>{s}</span>;
+}
+
+function calcularVencimento(dataEmissaoISO, condicaoPagamento){
+  const m = (condicaoPagamento||'').match(/(\d+)\s*DDE/i);
+  if(!m) return '';
+  const dias = parseInt(m[1]);
+  const d = new Date(dataEmissaoISO + 'T00:00:00');
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0,10);
+}
+
+// Monta uma fatura pronta a partir de uma proposta — chamada automaticamente sempre que uma proposta é criada
+function gerarFaturaDeProposta(prop, settings){
+  const dataEmissao = todayISO();
+  const totalLocacao = (prop.itens||[]).reduce((s,it)=> s + parseMoneyInput(it.valorLocacao), 0);
+  const totalSeguro = (prop.itens||[]).reduce((s,it)=> s + parseMoneyInput(it.seguro), 0);
+  const totalFrete = (prop.itens||[]).reduce((s,it)=> s + parseMoneyInput(it.frete), 0);
+  return {
+    id: null,
+    numero: `FL-${new Date().getFullYear()}-${String(settings.nextFaturaNumber||1).padStart(4,'0')}`,
+    propostaId: prop.id,
+    propostaNumero: prop.numero,
+    dataEmissao,
+    dataVencimento: calcularVencimento(dataEmissao, settings.defaultPagamento||''),
+    condicaoPagamento: (prop.pagamento||settings.defaultPagamento||'').split(',')[0].trim(),
+    referencia: `Contrato nº ${prop.numeroBase||prop.numero} / Proposta nº ${prop.numero}`,
+    cliente: {
+      razaoSocial: prop.cliente.razaoSocial, cnpj: prop.cliente.cnpj,
+      localObra: prop.cliente.endereco, responsavel: prop.cliente.responsavel, telefone: prop.cliente.telefone
+    },
+    equipamentos: (prop.itens||[]).map(it => ({
+      qtd: it.qtd, equipamento: it.tipo, modelo: it.modelo, serie: it.numeroSerie || '',
+      periodo: `${fmtDateBR(it.periodoInicio)} a ${fmtDateBR(it.periodoFim)}`,
+      valor: parseMoneyInput(it.valorLocacao)
+    })),
+    valorLocacao: totalLocacao,
+    seguroValor: totalSeguro,
+    seguroTexto: totalSeguro>0 ? '' : 'Não contratado',
+    freteValor: totalFrete,
+    freteTexto: totalFrete>0 ? '' : (prop.transporte || 'Por conta do cliente'),
+    totalGeral: totalLocacao + totalSeguro + totalFrete,
+    dadosPagamento: settings.defaultDadosPagamento || 'Via boleto bancário em anexo.',
+    observacoes: settings.defaultObservacoesFatura || '',
+    status: FATURA_STATUS_OPTIONS[0],
+    createdAt: null
+  };
+}
+
+function FaturaDocument({fatura, settings}){
+  return (
+    <div className="os-doc" id="fatura-doc-content" style={{padding:'34px 44px 30px'}}>
+      <div style={{textAlign:'center', marginBottom:14}}>
+        <img src={LOGO_BOXED} alt="AWP Plataformas" style={{width:130, borderRadius:6}}/>
+        <div style={{fontSize:11, color:'#5B6472', marginTop:8}}>{settings.tagline}</div>
+      </div>
+      <div style={{textAlign:'center', marginBottom:4}}>
+        <div className="doc-title" style={{fontSize:21}}>FATURA DE LOCAÇÃO</div>
+        <div style={{fontSize:15, fontWeight:700, color:'var(--navy)', marginTop:6}}>{settings.brandName}</div>
+        <div style={{fontSize:10.5, color:'#5B6472', fontStyle:'italic', marginTop:2}}>{settings.tagline}</div>
+        <div style={{fontSize:10.5, fontWeight:700, marginTop:4}}>{settings.companyName} | CNPJ {settings.companyCnpj}</div>
+        <div style={{fontSize:10.5, color:'#5B6472'}}>{settings.companyAddress}</div>
+        <div style={{fontSize:10.5, color:'#5B6472'}}>E-mail: {settings.companyEmailFinanceiro}</div>
+        <div style={{fontSize:10.5, color:'#5B6472', marginBottom:10}}>Celular: {settings.companyPhone}</div>
+      </div>
+
+      <div className="os-section-title" style={{textAlign:'left', margin:'14px 0 6px'}}>1. Dados da Fatura</div>
+      <table className="doc-table doc-kv">
+        <tbody>
+          <tr><td>Nº da Fatura</td><td>{fatura.numero}</td></tr>
+          <tr><td>Data de Emissão</td><td>{fmtDateBR(fatura.dataEmissao)}</td></tr>
+          <tr><td>Data de Vencimento</td><td>{fmtDateBR(fatura.dataVencimento)}</td></tr>
+          <tr><td>Condição de Pagamento</td><td>{fatura.condicaoPagamento}</td></tr>
+          <tr><td>Referência</td><td>{fatura.referencia}</td></tr>
+        </tbody>
+      </table>
+
+      <div className="os-section-title" style={{textAlign:'left', margin:'14px 0 6px'}}>2. Dados do Cliente</div>
+      <table className="doc-table doc-kv">
+        <tbody>
+          <tr><td>Cliente</td><td>{fatura.cliente.razaoSocial}</td></tr>
+          <tr><td>CNPJ</td><td>{fatura.cliente.cnpj}</td></tr>
+          <tr><td>Local da Obra</td><td>{fatura.cliente.localObra}</td></tr>
+          <tr><td>Responsável</td><td>{fatura.cliente.responsavel}</td></tr>
+          <tr><td>Telefone</td><td>{fatura.cliente.telefone}</td></tr>
+        </tbody>
+      </table>
+
+      <div className="os-section-title" style={{textAlign:'left', margin:'14px 0 6px'}}>3. Equipamentos Locados</div>
+      <table className="doc-table">
+        <thead><tr><th>Qtd</th><th>Equipamento</th><th>Modelo</th><th>Série</th><th>Período</th><th>Valor</th></tr></thead>
+        <tbody>
+          {fatura.equipamentos.map((eq,i)=>(
+            <tr key={i}>
+              <td>{String(eq.qtd).padStart(2,'0')}</td>
+              <td>{eq.equipamento}</td>
+              <td>{eq.modelo}</td>
+              <td>{eq.serie}</td>
+              <td>{eq.periodo}</td>
+              <td>{fmtMoney(eq.valor)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="os-section-title" style={{textAlign:'left', margin:'14px 0 6px'}}>4. Resumo Financeiro</div>
+      <table className="doc-table doc-kv">
+        <tbody>
+          <tr><td>Valor da locação</td><td>{fmtMoney(fatura.valorLocacao)}</td></tr>
+          <tr><td>Seguro</td><td>{fatura.seguroTexto || fmtMoney(fatura.seguroValor)}</td></tr>
+          <tr><td>Frete</td><td>{fatura.freteTexto || fmtMoney(fatura.freteValor)}</td></tr>
+          <tr><td><b>TOTAL GERAL</b></td><td><b>{fmtMoney(fatura.totalGeral)}</b></td></tr>
+        </tbody>
+      </table>
+
+      <div className="os-section-title" style={{textAlign:'left', margin:'14px 0 6px'}}>5. Dados para Pagamento</div>
+      <p className="doc-text" style={{fontWeight:600}}>{fatura.dadosPagamento}</p>
+
+      <div className="os-section-title" style={{textAlign:'left', margin:'14px 0 6px'}}>6. Observações</div>
+      <ul className="doc-list">
+        {(fatura.observacoes||'').split('\n').filter(Boolean).map((l,i)=><li key={i}>{l}</li>)}
+      </ul>
+
+      <div className="doc-foot" style={{padding:'14px 0 0'}}>
+        {settings.brandName} | {settings.tagline}
+      </div>
+    </div>
+  );
+}
+
+function FaturaForm({fatura, onCancel, onSave, notify}){
+  const [f, setF] = useState(fatura);
+  const set = (k,v) => setF(prev=>({...prev, [k]:v}));
+  const setCliente = (k,v) => setF(prev=>({...prev, cliente:{...prev.cliente, [k]:v}}));
+  const updateEq = (i,k,v) => setF(prev=>({...prev, equipamentos: prev.equipamentos.map((e,idx)=> idx===i ? {...e,[k]:v} : e)}));
+
+  const totalCalc = (parseMoneyInput(f.valorLocacao) + parseMoneyInput(f.seguroValor) + parseMoneyInput(f.freteValor));
+
+  return (
+    <div>
+      <div className="page-head">
+        <div><h1>{fatura.id ? `Editar fatura ${f.numero}` : `Nova fatura ${f.numero}`}</h1><p>Vinculada à proposta nº {f.propostaNumero}</p></div>
+        <div style={{display:'flex', gap:8}}>
+          <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+          <button className="btn btn-primary" onClick={()=>{ onSave({...f, totalGeral: totalCalc}); }}><IconCheck width="15" height="15"/>Salvar fatura</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">1</span>Dados da fatura</h2></div>
+        <div className="card-body">
+          <div className="grid3">
+            <div className="field"><label>Nº da fatura</label><input value={f.numero} onChange={e=>set('numero', e.target.value)}/></div>
+            <div className="field"><label>Data de emissão</label><input type="date" value={f.dataEmissao} onChange={e=>set('dataEmissao', e.target.value)}/></div>
+            <div className="field"><label>Data de vencimento</label><input type="date" value={f.dataVencimento} onChange={e=>set('dataVencimento', e.target.value)}/></div>
+          </div>
+          <div className="grid2">
+            <div className="field"><label>Condição de pagamento</label><input value={f.condicaoPagamento} onChange={e=>set('condicaoPagamento', e.target.value)}/></div>
+            <div className="field"><label>Referência</label><input value={f.referencia} onChange={e=>set('referencia', e.target.value)}/></div>
+          </div>
+          <div className="field"><label>Status</label>
+            <select value={f.status} onChange={e=>set('status', e.target.value)}>
+              {FATURA_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">2</span>Dados do cliente</h2></div>
+        <div className="card-body">
+          <div className="grid2">
+            <div className="field"><label>Cliente</label><input value={f.cliente.razaoSocial} onChange={e=>setCliente('razaoSocial', e.target.value)}/></div>
+            <div className="field"><label>CNPJ</label><input value={f.cliente.cnpj} onChange={e=>setCliente('cnpj', e.target.value)}/></div>
+          </div>
+          <div className="field"><label>Local da obra</label><input value={f.cliente.localObra} onChange={e=>setCliente('localObra', e.target.value)}/></div>
+          <div className="grid2">
+            <div className="field"><label>Responsável</label><input value={f.cliente.responsavel} onChange={e=>setCliente('responsavel', e.target.value)}/></div>
+            <div className="field"><label>Telefone</label><input value={f.cliente.telefone} onChange={e=>setCliente('telefone', e.target.value)}/></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">3</span>Equipamentos locados</h2></div>
+        <div className="card-body">
+          <table>
+            <thead><tr><th>Qtd</th><th>Equipamento</th><th>Modelo</th><th>Série</th><th>Período</th><th>Valor</th></tr></thead>
+            <tbody>
+              {f.equipamentos.map((eq,i)=>(
+                <tr key={i}>
+                  <td><input value={eq.qtd} onChange={e=>updateEq(i,'qtd',e.target.value)} style={{width:50}}/></td>
+                  <td><input value={eq.equipamento} onChange={e=>updateEq(i,'equipamento',e.target.value)}/></td>
+                  <td><input value={eq.modelo} onChange={e=>updateEq(i,'modelo',e.target.value)}/></td>
+                  <td><input value={eq.serie} onChange={e=>updateEq(i,'serie',e.target.value)}/></td>
+                  <td><input value={eq.periodo} onChange={e=>updateEq(i,'periodo',e.target.value)}/></td>
+                  <td><input value={eq.valor} onChange={e=>updateEq(i,'valor',e.target.value)} style={{width:90}}/></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">4</span>Resumo financeiro</h2></div>
+        <div className="card-body">
+          <div className="grid3">
+            <div className="field"><label>Valor da locação (R$)</label><input value={f.valorLocacao} onChange={e=>set('valorLocacao', e.target.value)}/></div>
+            <div className="field"><label>Seguro (R$ ou texto, ex: "Não contratado")</label><input value={f.seguroTexto || f.seguroValor} onChange={e=>{ const v=e.target.value; const n=parseMoneyInput(v); set('seguroValor', n); set('seguroTexto', isNaN(n)||n===0 ? v : ''); }}/></div>
+            <div className="field"><label>Frete (R$ ou texto, ex: "Por conta do cliente")</label><input value={f.freteTexto || f.freteValor} onChange={e=>{ const v=e.target.value; const n=parseMoneyInput(v); set('freteValor', n); set('freteTexto', isNaN(n)||n===0 ? v : ''); }}/></div>
+          </div>
+          <div className="total-bar" style={{background:'var(--blue-light)', borderRadius:8}}>
+            <span className="label">Total geral</span>
+            <span className="value">{fmtMoney(totalCalc)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">5</span>Dados para pagamento</h2></div>
+        <div className="card-body"><textarea rows="2" value={f.dadosPagamento} onChange={e=>set('dadosPagamento', e.target.value)}/></div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">6</span>Observações</h2></div>
+        <div className="card-body"><textarea rows="4" value={f.observacoes} onChange={e=>set('observacoes', e.target.value)}/></div>
+      </div>
+    </div>
+  );
+}
+
+function FaturaViewer({fatura, settings, onBack, onEdit, notify}){
+  const [generating, setGenerating] = useState(false);
+  const doDownloadPdf = async () => {
+    setGenerating(true);
+    const ok = await gerarPdfDoNode('fatura-doc-content', `fatura-${fatura.numero}-${(fatura.cliente.razaoSocial||'cliente').slice(0,30)}.pdf`, (msg)=>notify(msg));
+    setGenerating(false);
+    if(ok) notify('PDF gerado e baixado.');
+  };
+  return (
+    <div>
+      <div className="page-head no-print">
+        <div><h1>Fatura {fatura.numero}</h1><p>{fatura.cliente.razaoSocial} — Proposta nº {fatura.propostaNumero}</p></div>
+        <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+          <button className="btn btn-ghost" onClick={onBack}>Voltar</button>
+          <button className="btn btn-secondary" onClick={onEdit}><IconEdit width="15" height="15"/>Editar</button>
+          <button className="btn btn-primary" onClick={doDownloadPdf} disabled={generating}>
+            <IconDownload width="15" height="15"/>{generating ? 'Gerando PDF...' : 'Baixar PDF'}
+          </button>
+        </div>
+      </div>
+      <div className="card no-print" style={{marginBottom:16}}>
+        <div className="card-body" style={{display:'flex', gap:14, alignItems:'center', flexWrap:'wrap'}}>
+          <div><div className="hint" style={{marginBottom:4}}>Status</div><FaturaStatusBadge status={fatura.status}/></div>
+          <div><div className="hint" style={{marginBottom:4}}>Vencimento</div><span style={{fontSize:13}}>{fmtDateBR(fatura.dataVencimento)}</span></div>
+          <div><div className="hint" style={{marginBottom:4}}>Total</div><b style={{fontSize:14}}>{fmtMoney(fatura.totalGeral)}</b></div>
+        </div>
+      </div>
+      <div className="proposal-doc-wrap">
+        <FaturaDocument fatura={fatura} settings={settings}/>
+      </div>
+    </div>
+  );
+}
+
+function FaturasTab({faturas, settings, notify, onSaveFatura, onDeleteFatura, openFaturaId, onConsumeOpenFatura}){
+  const [mode, setMode] = useState('list');
+  const [current, setCurrent] = useState(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('todos');
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  useEffect(()=>{
+    if(openFaturaId){
+      const f = faturas.find(x=>x.id===openFaturaId);
+      if(f){ setCurrent(f); setMode('view'); }
+      onConsumeOpenFatura && onConsumeOpenFatura();
+    }
+  }, [openFaturaId, faturas]);
+
+  const filtered = faturas.slice()
+    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+    .filter(f => (f.cliente.razaoSocial||'').toLowerCase().includes(query.toLowerCase()) || String(f.numero).toLowerCase().includes(query.toLowerCase()))
+    .filter(f => statusFilter==='todos' || (f.status||FATURA_STATUS_OPTIONS[0])===statusFilter);
+
+  const changeStatusQuick = (f, newStatus) => {
+    onSaveFatura({...f, status:newStatus});
+    notify(`Status da fatura ${f.numero} atualizado.`);
+  };
+
+  if(mode==='edit' && current){
+    return <FaturaForm fatura={current} onCancel={()=>setMode('list')} notify={notify}
+      onSave={(f)=>{ onSaveFatura(f); setMode('list'); notify(`Fatura ${f.numero} salva.`); }}/>;
+  }
+  if(mode==='view' && current){
+    return <FaturaViewer fatura={current} settings={settings} onBack={()=>setMode('list')} notify={notify}
+      onEdit={()=>setMode('edit')}/>;
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div><h1>Faturas</h1><p>Geradas automaticamente a cada proposta, para controle financeiro centralizado.</p></div>
+      </div>
+
+      <div className="search-row">
+        <IconSearch width="16" height="16" style={{color:'var(--muted)'}}/>
+        <input placeholder="Buscar por nº ou cliente..." value={query} onChange={e=>setQuery(e.target.value)}/>
+      </div>
+      <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{marginBottom:14, maxWidth:220}}>
+        <option value="todos">Todos os status</option>
+        {FATURA_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+      </select>
+
+      <div className="card">
+        {filtered.length===0 ? (
+          <div className="empty-state">
+            <IconReceipt/>
+            <p>{faturas.length===0 ? 'Nenhuma fatura gerada ainda — elas aparecem automaticamente quando você cria uma proposta.' : 'Nenhuma fatura encontrada para essa busca.'}</p>
+          </div>
+        ) : (
+          <table className="rtable">
+            <thead><tr><th>Nº</th><th>Cliente</th><th>Vencimento</th><th>Status</th><th>Total</th><th></th></tr></thead>
+            <tbody>
+              {filtered.map(f=>(
+                <tr key={f.id}>
+                  <td className="mono" data-label="Nº">{f.numero}<div className="hint">Proposta nº {f.propostaNumero}</div></td>
+                  <td data-label="Cliente"><b>{f.cliente.razaoSocial}</b></td>
+                  <td data-label="Vencimento">{fmtDateBR(f.dataVencimento)}</td>
+                  <td data-label="Status">
+                    <select value={f.status||FATURA_STATUS_OPTIONS[0]} onChange={e=>changeStatusQuick(f, e.target.value)} style={{fontSize:12, padding:'4px 6px'}}>
+                      {FATURA_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </td>
+                  <td className="mono" data-label="Total">{fmtMoney(f.totalGeral)}</td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <button className="icon-btn" title="Visualizar" onClick={()=>{setCurrent(f); setMode('view');}}><IconEye/></button>
+                      <button className="icon-btn" title="Editar" onClick={()=>{setCurrent(f); setMode('edit');}}><IconEdit/></button>
+                      <button className="icon-btn del" title="Excluir" onClick={()=>setConfirmDel(f)}><IconTrash/></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <ConfirmModal
+        open={!!confirmDel}
+        title="Excluir fatura"
+        text={confirmDel ? `Tem certeza que deseja excluir a fatura ${confirmDel.numero} (${confirmDel.cliente.razaoSocial})?` : ''}
+        onConfirm={()=>{ onDeleteFatura(confirmDel.id); notify('Fatura excluída.'); setConfirmDel(null); }}
+        onCancel={()=>setConfirmDel(null)}
+      />
+    </div>
+  );
+}
+
 function ConfigTab({settings, onSave, notify, fullData, onRestore, onMerge, cloudStatus}){
   const [form, setForm] = useState(settings);
   const set = (k,v) => setForm(f=>({...f, [k]:v}));
@@ -3579,9 +4085,9 @@ function ConfigTab({settings, onSave, notify, fullData, onRestore, onMerge, clou
       <ConfirmModal
         open={confirmWipe}
         title="Zerar todos os dados"
-        text="Isso vai apagar TODOS os clientes, máquinas, propostas e OS cadastrados, sem volta. Recomendado só depois de confirmar que você já baixou um backup, se precisar dele."
+        text="Isso vai apagar TODOS os clientes, máquinas, propostas, OS e faturas cadastrados, sem volta. Recomendado só depois de confirmar que você já baixou um backup, se precisar dele."
         onConfirm={()=>{
-          onRestore({clients:[], machines:[], proposals:[], os:[]});
+          onRestore({clients:[], machines:[], proposals:[], os:[], faturas:[]});
           setConfirmWipe(false);
           notify('Sistema zerado. Pronto para começar do zero.');
         }}
@@ -3593,7 +4099,7 @@ function ConfigTab({settings, onSave, notify, fullData, onRestore, onMerge, clou
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <h3>Importar dados</h3>
             <p>
-              O arquivo contém: {countOf(confirmRestore,'clients')} cliente(s), {countOf(confirmRestore,'machines')} máquina(s), {countOf(confirmRestore,'proposals')} proposta(s), {countOf(confirmRestore,'os')} OS{confirmRestore && confirmRestore.users ? `, ${confirmRestore.users.length} usuário(s) com senha` : ''}.<br/><br/>
+              O arquivo contém: {countOf(confirmRestore,'clients')} cliente(s), {countOf(confirmRestore,'machines')} máquina(s), {countOf(confirmRestore,'proposals')} proposta(s), {countOf(confirmRestore,'os')} OS, {countOf(confirmRestore,'faturas')} fatura(s){confirmRestore && confirmRestore.users ? `, ${confirmRestore.users.length} usuário(s) com senha` : ''}.<br/><br/>
               Escolha como aplicar: <b>Mesclar</b> adiciona esses registros aos que já existem (sem apagar nada). <b>Substituir tudo</b> troca completamente os dados atuais por estes.
             </p>
             <div className="row" style={{flexWrap:'wrap'}}>
@@ -3687,8 +4193,9 @@ function App(){
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('propostas');
   const [mobileView, setMobileView] = useState('menu'); // 'menu' | 'content' — mobile single-screen navigation
-  const [data, setData] = useState({clients:[], machines:[], proposals:[], os:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}});
+  const [data, setData] = useState({clients:[], machines:[], proposals:[], os:[], faturas:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}});
   const [cloudStatus, setCloudStatus] = useState(FIREBASE_CONFIGURED ? 'connecting' : 'local'); // 'local' | 'connecting' | 'online' | 'error'
+  const [openFaturaId, setOpenFaturaId] = useState(null);
   const [toastMsg, notify] = useToast();
   const [currentUser, setCurrentUser] = useState(null);
   const dataRef = useRef(data);
@@ -3703,7 +4210,7 @@ function App(){
           if(snap.exists){
             setData(normalizeCloudData(snap.data()));
           } else {
-            const initial = {clients:[], machines:[], proposals:[], os:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}};
+            const initial = {clients:[], machines:[], proposals:[], os:[], faturas:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}};
             docRef.set(initial).catch(e=>console.error('Erro ao inicializar doc na nuvem', e));
             setData(initial);
           }
@@ -3768,14 +4275,27 @@ function App(){
     const finalProp = isNew ? {...prop, id: uid(), createdAt: Date.now()} : {...prop, createdAt: prop.createdAt || Date.now()};
     const proposals = isNew ? [...prev.proposals, finalProp] : prev.proposals.map(p=>p.id===finalProp.id?finalProp:p);
     let settings = prev.settings;
+    let faturas = prev.faturas;
     if(isNew){
       const usedNum = parseInt(prop.numero);
       const nextNum = (!isNaN(usedNum) && usedNum >= (prev.settings.nextProposalNumber||1)) ? usedNum+1 : (prev.settings.nextProposalNumber||1);
       settings = {...prev.settings, nextProposalNumber: nextNum};
+      // Toda proposta nova (incluindo renovações) gera automaticamente sua própria fatura vinculada
+      const novaFatura = {...gerarFaturaDeProposta(finalProp, settings), id: uid(), createdAt: Date.now()};
+      faturas = [...(prev.faturas||[]), novaFatura];
+      settings = {...settings, nextFaturaNumber: (settings.nextFaturaNumber||1) + 1};
     }
-    return {...prev, proposals, settings};
+    return {...prev, proposals, faturas, settings};
   });
   const deleteProposal = (id) => persistAndSet(prev => ({...prev, proposals: prev.proposals.filter(p=>p.id!==id)}));
+
+  const saveFatura = (f) => persistAndSet(prev => {
+    const isNew = !f.id;
+    const finalFatura = isNew ? {...f, id: uid(), createdAt: Date.now()} : {...f, createdAt: f.createdAt || Date.now()};
+    const faturas = isNew ? [...(prev.faturas||[]), finalFatura] : (prev.faturas||[]).map(x=>x.id===finalFatura.id?finalFatura:x);
+    return {...prev, faturas};
+  });
+  const deleteFatura = (id) => persistAndSet(prev => ({...prev, faturas: (prev.faturas||[]).filter(f=>f.id!==id)}));
 
   const saveOs = (o) => persistAndSet(prev => {
     const isNew = !o.id;
@@ -3804,6 +4324,7 @@ function App(){
     machines: Array.isArray(incoming.machines) ? incoming.machines : prev.machines,
     proposals: Array.isArray(incoming.proposals) ? incoming.proposals : prev.proposals,
     os: Array.isArray(incoming.os) ? incoming.os : prev.os,
+    faturas: Array.isArray(incoming.faturas) ? incoming.faturas : prev.faturas,
     users: Array.isArray(incoming.users) && incoming.users.length ? incoming.users : prev.users,
     settings: incoming.settings ? { ...DEFAULT_SETTINGS, ...incoming.settings } : prev.settings,
   }));
@@ -3811,7 +4332,7 @@ function App(){
   const mergeData = (incoming) => persistAndSet(prev => {
     const mergeArr = (prevArr, incArr) => {
       if(!Array.isArray(incArr) || incArr.length===0) return prevArr;
-      const byId = new Map(prevArr.map(x=>[x.id, x]));
+      const byId = new Map((prevArr||[]).map(x=>[x.id, x]));
       incArr.forEach(item => {
         const id = item.id || uid();
         byId.set(id, {...item, id});
@@ -3824,6 +4345,7 @@ function App(){
       machines: mergeArr(prev.machines, incoming.machines),
       proposals: mergeArr(prev.proposals, incoming.proposals),
       os: mergeArr(prev.os, incoming.os),
+      faturas: mergeArr(prev.faturas, incoming.faturas),
     };
   });
 
@@ -3840,11 +4362,13 @@ function App(){
   }
 
   const urgentProposalsCount = data.proposals.filter(p=>isUrgente(p)).length;
+  const faturasVencidasCount = (data.faturas||[]).filter(f=>f.status==='Vencida' || (f.status==='Pendente' && f.dataVencimento && f.dataVencimento < todayISO())).length;
   const NAV = [
     {id:'propostas', label:'Propostas', short:'Propostas', icon:IconDoc, count:data.proposals.length, alert:urgentProposalsCount},
     {id:'clientes', label:'Clientes', short:'Clientes', icon:IconUsers, count:data.clients.length},
     {id:'maquinas', label:'Máquinas', short:'Máquinas', icon:IconTruck, count:data.machines.length},
     {id:'ordens', label:'Ordem de Serviço', short:'OS', icon:IconWrench, count:data.os.length},
+    {id:'faturas', label:'Faturas', short:'Faturas', icon:IconReceipt, count:(data.faturas||[]).length, alert:faturasVencidasCount},
     {id:'faturamento', label:'Análise de Faturamento', short:'Faturamento', icon:IconBarChart, count:null},
     {id:'config', label:'Configurações', short:'Config', icon:IconSettings, count:null},
   ];
@@ -3930,11 +4454,12 @@ function App(){
       </aside>
 
       <main>
-        {tab==='propostas' && <PropostasTab proposals={data.proposals} clients={data.clients} machines={data.machines} settings={data.settings} currentUser={currentUser} onSaveProposal={saveProposal} onDeleteProposal={deleteProposal} notify={notify}/>}
+        {tab==='propostas' && <PropostasTab proposals={data.proposals} clients={data.clients} machines={data.machines} settings={data.settings} currentUser={currentUser} faturas={data.faturas} onSaveProposal={saveProposal} onDeleteProposal={deleteProposal} onGoToFatura={(id)=>{ setOpenFaturaId(id); setTab('faturas'); }} notify={notify}/>}
         {tab==='clientes' && <ClientesTab clients={data.clients} onSave={saveClient} onDelete={deleteClient} notify={notify}/>}
         {tab==='maquinas' && <MaquinasTab machines={data.machines} onSave={saveMachine} onDelete={deleteMachine} notify={notify}/>}
         {tab==='config' && <ConfigTab settings={data.settings} onSave={saveSettings} notify={notify} fullData={data} onRestore={restoreData} onMerge={mergeData} cloudStatus={cloudStatus}/>}
         {tab==='ordens' && <OrdensServicoTab proposals={data.proposals} settings={data.settings} currentUser={currentUser} os={data.os} onSaveOs={saveOs} onDeleteOs={deleteOs} notify={notify}/>}
+        {tab==='faturas' && <FaturasTab faturas={data.faturas} settings={data.settings} notify={notify} onSaveFatura={saveFatura} onDeleteFatura={deleteFatura} openFaturaId={openFaturaId} onConsumeOpenFatura={()=>setOpenFaturaId(null)}/>}
         {tab==='faturamento' && <FaturamentoTab proposals={data.proposals}/>}
       </main>
 
