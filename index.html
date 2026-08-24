@@ -500,10 +500,26 @@ const parseMoneyInput = (v) => {
 const itemSubtotal = (it) => parseMoneyInput(it.valorLocacao) + parseMoneyInput(it.seguro) + parseMoneyInput(it.frete);
 
 // Elementos que nunca devem ser cortados ao meio entre duas páginas do PDF
-const PDF_AVOID_SPLIT_SELECTOR = 'tr, .spec-card, .doc-signed-block, .doc-sign-cols, .os-row, .os-footer-grid .frow, .os-text-block, .doc-total-box';
+const PDF_AVOID_SPLIT_SELECTOR = 'tr, .spec-card, .doc-signed-block, .doc-sign-cols, .doc-sign-grid-single, .os-row, .os-footer-grid .frow, .os-text-block, .doc-total-box';
+
+async function aguardarRenderizacaoCompleta(node){
+  // Espera fontes carregarem e todas as imagens (logo, assinaturas) estarem totalmente decodificadas,
+  // evitando que o PDF seja gerado com um layout "incompleto" (causa comum de corte de conteúdo).
+  try{ if(document.fonts && document.fonts.ready) await document.fonts.ready; }catch(e){}
+  const imgs = Array.from(node.querySelectorAll('img'));
+  await Promise.all(imgs.map(img => {
+    if(img.complete && img.naturalWidth > 0) return Promise.resolve();
+    if(img.decode) return img.decode().catch(()=>{});
+    return new Promise(res => { img.onload = res; img.onerror = res; });
+  }));
+  // dá dois frames de respiro pro navegador terminar de "assentar" o layout antes de tirar o "print"
+  await new Promise(res => requestAnimationFrame(()=>requestAnimationFrame(res)));
+}
 
 async function renderizarPaginasPdf(node){
   const MARGEM_MM = 8; // margem de impressão em volta do conteúdo, em todas as páginas
+  const FATOR_SEGURANCA = 0.96; // reserva ~4% de folga em cada página, contra pequenas imprecisões de medição
+  await aguardarRenderizacaoCompleta(node);
   const canvas = await window.html2canvas(node, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF('p', 'mm', 'a4');
@@ -513,7 +529,7 @@ async function renderizarPaginasPdf(node){
   const pageContentHeightMm = pdfHeight - MARGEM_MM*2;
   const totalHeightMm = canvas.height * imgWidth / canvas.width;
   const pxPerMm = canvas.height / totalHeightMm;
-  const pageHeightPx = pageContentHeightMm * pxPerMm;
+  const pageHeightPx = pageContentHeightMm * pxPerMm * FATOR_SEGURANCA;
 
   // Mapeia, em pixels do canvas, as faixas de todo elemento que não pode ser dividido entre páginas
   const nodeRect = node.getBoundingClientRect();
@@ -539,6 +555,8 @@ async function renderizarPaginasPdf(node){
       }
       if(corte <= cursor) corte = Math.min(cursor + pageHeightPx, canvas.height); // segurança contra loop infinito
     }
+    // trava extra: nenhuma página pode, por engano de arredondamento, ultrapassar a altura útil real
+    corte = Math.min(corte, cursor + pageContentHeightMm*pxPerMm);
     cortes.push([cursor, corte]);
     cursor = corte;
   }
