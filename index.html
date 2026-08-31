@@ -4169,7 +4169,7 @@ function ContaFinanceiraForm({tipo, conta, settings, onCancel, onSave, notify}){
   );
 }
 
-function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete}){
+function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete, faturas, onGerarDeFaturas}){
   const isPagar = tipo === 'pagar';
   const STATUS_OPTIONS = isPagar ? CONTA_PAGAR_STATUS : CONTA_RECEBER_STATUS;
   const statusPago = isPagar ? 'Pago' : 'Recebido';
@@ -4180,6 +4180,8 @@ function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete})
   const [confirmDel, setConfirmDel] = useState(null);
 
   const effStatus = c => isContaVencida(c, 'Pendente') ? 'Vencido' : (c.status||'Pendente');
+
+  const faturasSemConta = !isPagar ? (faturas||[]).filter(f => !(items||[]).some(c=>c.faturaId===f.id)) : [];
 
   const filtered = (items||[]).slice()
     .sort((a,b)=> (a.dataVencimento||'').localeCompare(b.dataVencimento||''))
@@ -4213,6 +4215,17 @@ function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete})
         </div>
         <div><button className="btn btn-primary" onClick={()=>{ setCurrent(null); setMode('form'); }}><IconPlus width="15" height="15"/>Novo lançamento</button></div>
       </div>
+
+      {faturasSemConta.length>0 && (
+        <div className="card" style={{marginBottom:16, background:'#FDECDA', border:'1px solid #F5D6A8'}}>
+          <div className="card-body" style={{display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10}}>
+            <div><b>{faturasSemConta.length}</b> fatura(s) ainda não têm conta a receber vinculada.</div>
+            <button className="btn btn-primary" onClick={()=>onGerarDeFaturas && onGerarDeFaturas()}>
+              <IconRefresh width="15" height="15"/>Gerar automaticamente
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="stats-grid" style={{marginBottom:16}}>
         <div className="card stat-card" style={{borderTopColor:'var(--orange)'}}>
@@ -4697,8 +4710,8 @@ function RelatoriosFinanceirosTab({settings, contasPagar, contasReceber}){
 }
 
 function FinanceiroModule(props){
-  const { settings, notify, onSaveSettings, contasPagar, contasReceber, extratoOfx,
-    onSaveContaPagar, onDeleteContaPagar, onSaveContaReceber, onDeleteContaReceber,
+  const { settings, notify, onSaveSettings, contasPagar, contasReceber, extratoOfx, faturas,
+    onSaveContaPagar, onDeleteContaPagar, onSaveContaReceber, onDeleteContaReceber, onGerarContasReceberDeFaturas,
     onImportarOfx, onAtualizarLinhaOfx, onConciliarLinhaOfx, onDesconciliarLinhaOfx } = props;
   const [sub, setSub] = useState('pagar');
 
@@ -4729,7 +4742,7 @@ function FinanceiroModule(props){
       </div>
       <div style={{marginTop:16}}>
         {sub==='pagar' && <ContasFinanceirasTab tipo="pagar" items={contasPagar} settings={settings} notify={notify} onSave={onSaveContaPagar} onDelete={onDeleteContaPagar}/>}
-        {sub==='receber' && <ContasFinanceirasTab tipo="receber" items={contasReceber} settings={settings} notify={notify} onSave={onSaveContaReceber} onDelete={onDeleteContaReceber}/>}
+        {sub==='receber' && <ContasFinanceirasTab tipo="receber" items={contasReceber} settings={settings} notify={notify} onSave={onSaveContaReceber} onDelete={onDeleteContaReceber} faturas={faturas} onGerarDeFaturas={onGerarContasReceberDeFaturas}/>}
         {sub==='fluxo' && <FluxoCaixaTab settings={settings} contasPagar={contasPagar} contasReceber={contasReceber}/>}
         {sub==='conciliacao' && <ConciliacaoBancariaTab settings={settings} onSaveSettings={onSaveSettings} notify={notify}
           extratoOfx={extratoOfx} contasPagar={contasPagar} contasReceber={contasReceber}
@@ -5121,6 +5134,21 @@ function App(){
   };
 
   // ---- Financeiro: Contas a Pagar / Receber ----
+  // Gera contas a receber para faturas antigas que ainda não têm um lançamento financeiro vinculado
+  // (útil na primeira vez que o módulo Financeiro é usado, para faturas já lançadas antes dele existir)
+  const gerarContasReceberDeFaturasExistentes = () => {
+    const jaVinculadas = new Set((data.contasReceber||[]).map(c=>c.faturaId).filter(Boolean));
+    const qtd = (data.faturas||[]).filter(f => !jaVinculadas.has(f.id)).length;
+    if(qtd===0){ notify('Todas as faturas já têm conta a receber vinculada.'); return; }
+    persistAndSet(prev => {
+      const jaVinc2 = new Set((prev.contasReceber||[]).map(c=>c.faturaId).filter(Boolean));
+      const faturasSemConta = (prev.faturas||[]).filter(f => !jaVinc2.has(f.id));
+      if(faturasSemConta.length===0) return prev;
+      const novas = faturasSemConta.map(f => ({...gerarContaReceberDeFatura(f), id: uid(), createdAt: Date.now()}));
+      return {...prev, contasReceber: [...(prev.contasReceber||[]), ...novas]};
+    });
+    notify(`${qtd} conta(s) a receber gerada(s) a partir de faturas existentes.`);
+  };
   const saveContaPagar = (c) => persistAndSet(prev => {
     const isNew = !c.id;
     const finalC = isNew ? {...c, id: uid(), createdAt: Date.now()} : {...c, createdAt: c.createdAt || Date.now()};
@@ -5336,8 +5364,10 @@ function App(){
         {tab==='financeiro' && <FinanceiroModule
           settings={data.settings} notify={notify} onSaveSettings={saveSettings}
           contasPagar={data.contasPagar||[]} contasReceber={data.contasReceber||[]} extratoOfx={data.extratoOfx||[]}
+          faturas={data.faturas||[]}
           onSaveContaPagar={saveContaPagar} onDeleteContaPagar={deleteContaPagar}
           onSaveContaReceber={saveContaReceber} onDeleteContaReceber={deleteContaReceber}
+          onGerarContasReceberDeFaturas={gerarContasReceberDeFaturasExistentes}
           onImportarOfx={importarExtratoOfx} onAtualizarLinhaOfx={atualizarLinhaOfx}
           onConciliarLinhaOfx={conciliarLinhaOfx} onDesconciliarLinhaOfx={desconciliarLinhaOfx}
         />}
