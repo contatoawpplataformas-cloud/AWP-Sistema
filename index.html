@@ -4434,13 +4434,14 @@ function ContaBancariaForm({conta, onCancel, onSave}){
   );
 }
 
-function ConciliacaoBancariaTab({settings, onSaveSettings, notify, extratoOfx, contasPagar, contasReceber, onImportarOfx, onConciliarLinhaOfx, onDesconciliarLinhaOfx}){
+function ConciliacaoBancariaTab({settings, onSaveSettings, notify, extratoOfx, contasPagar, contasReceber, onImportarOfx, onConciliarLinhaOfx, onDesconciliarLinhaOfx, onExcluirLinhaOfx}){
   const contasBancarias = settings.contasBancarias || [];
   const [contaSel, setContaSel] = useState(contasBancarias[0]?.id || '');
   const [showContaForm, setShowContaForm] = useState(false);
   const [editContaBanc, setEditContaBanc] = useState(null);
   const [filtro, setFiltro] = useState('pendentes');
   const [vinculos, setVinculos] = useState({}); // linhaId -> id da conta selecionada no dropdown
+  const [confirmDelLinha, setConfirmDelLinha] = useState(null);
   const fileRef = useRef(null);
 
   const salvarContaBancaria = (cb) => {
@@ -4581,11 +4582,14 @@ function ConciliacaoBancariaTab({settings, onSaveSettings, notify, extratoOfx, c
                       )}
                     </td>
                     <td className="actions-cell">
-                      {l.conciliado ? (
-                        <button className="icon-btn" title="Desfazer conciliação" onClick={()=>onDesconciliarLinhaOfx(l.id)}><IconRefresh/></button>
-                      ) : (
-                        <button className="icon-btn" title="Conciliar" onClick={()=>conciliar(l)}><IconLink/></button>
-                      )}
+                      <div className="row-actions">
+                        {l.conciliado ? (
+                          <button className="icon-btn" title="Desfazer conciliação" onClick={()=>onDesconciliarLinhaOfx(l.id)}><IconRefresh/></button>
+                        ) : (
+                          <button className="icon-btn" title="Conciliar" onClick={()=>conciliar(l)}><IconLink/></button>
+                        )}
+                        <button className="icon-btn del" title="Excluir linha" onClick={()=>setConfirmDelLinha(l)}><IconTrash/></button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -4594,6 +4598,14 @@ function ConciliacaoBancariaTab({settings, onSaveSettings, notify, extratoOfx, c
           </table>
         )}
       </div>
+
+      <ConfirmModal
+        open={!!confirmDelLinha}
+        title="Excluir linha do extrato"
+        text={confirmDelLinha ? `Remover a linha "${confirmDelLinha.memo}" (${fmtMoney(confirmDelLinha.valor)}) do extrato importado? Isso não afeta o lançamento financeiro, caso já esteja conciliada.` : ''}
+        onConfirm={()=>{ onExcluirLinhaOfx(confirmDelLinha.id); notify('Linha removida do extrato.'); setConfirmDelLinha(null); }}
+        onCancel={()=>setConfirmDelLinha(null)}
+      />
 
       {showContaForm && <ContaBancariaForm conta={editContaBanc} onCancel={()=>{setShowContaForm(false); setEditContaBanc(null);}} onSave={salvarContaBancaria}/>}
     </div>
@@ -4712,7 +4724,7 @@ function RelatoriosFinanceirosTab({settings, contasPagar, contasReceber}){
 function FinanceiroModule(props){
   const { settings, notify, onSaveSettings, contasPagar, contasReceber, extratoOfx, faturas,
     onSaveContaPagar, onDeleteContaPagar, onSaveContaReceber, onDeleteContaReceber, onGerarContasReceberDeFaturas,
-    onImportarOfx, onAtualizarLinhaOfx, onConciliarLinhaOfx, onDesconciliarLinhaOfx } = props;
+    onImportarOfx, onAtualizarLinhaOfx, onConciliarLinhaOfx, onDesconciliarLinhaOfx, onExcluirLinhaOfx } = props;
   const [sub, setSub] = useState('pagar');
 
   const vencidasPagar = (contasPagar||[]).filter(c=>isContaVencida(c,'Pendente')).length;
@@ -4747,7 +4759,7 @@ function FinanceiroModule(props){
         {sub==='conciliacao' && <ConciliacaoBancariaTab settings={settings} onSaveSettings={onSaveSettings} notify={notify}
           extratoOfx={extratoOfx} contasPagar={contasPagar} contasReceber={contasReceber}
           onImportarOfx={onImportarOfx} onAtualizarLinhaOfx={onAtualizarLinhaOfx}
-          onConciliarLinhaOfx={onConciliarLinhaOfx} onDesconciliarLinhaOfx={onDesconciliarLinhaOfx}/>}
+          onConciliarLinhaOfx={onConciliarLinhaOfx} onDesconciliarLinhaOfx={onDesconciliarLinhaOfx} onExcluirLinhaOfx={onExcluirLinhaOfx}/>}
         {sub==='relatorios' && <RelatoriosFinanceirosTab settings={settings} contasPagar={contasPagar} contasReceber={contasReceber}/>}
       </div>
     </div>
@@ -5189,6 +5201,9 @@ function App(){
   const desconciliarLinhaOfx = (linhaId) => persistAndSet(prev => ({
     ...prev, extratoOfx: (prev.extratoOfx||[]).map(l=>l.id===linhaId?{...l, conciliado:false, vinculo:null}:l)
   }));
+  const excluirLinhaOfx = (linhaId) => persistAndSet(prev => ({
+    ...prev, extratoOfx: (prev.extratoOfx||[]).filter(l=>l.id!==linhaId)
+  }));
 
   const saveOs = (o) => persistAndSet(prev => {
     const isNew = !o.id;
@@ -5369,7 +5384,7 @@ function App(){
           onSaveContaReceber={saveContaReceber} onDeleteContaReceber={deleteContaReceber}
           onGerarContasReceberDeFaturas={gerarContasReceberDeFaturasExistentes}
           onImportarOfx={importarExtratoOfx} onAtualizarLinhaOfx={atualizarLinhaOfx}
-          onConciliarLinhaOfx={conciliarLinhaOfx} onDesconciliarLinhaOfx={desconciliarLinhaOfx}
+          onConciliarLinhaOfx={conciliarLinhaOfx} onDesconciliarLinhaOfx={desconciliarLinhaOfx} onExcluirLinhaOfx={excluirLinhaOfx}
         />}
       </main>
 
