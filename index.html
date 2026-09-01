@@ -3530,17 +3530,40 @@ function StatCard({title, stats, colorVar}){
 }
 
 function FaturamentoTab({proposals}){
-  const all = statsFor(proposals);
+  const [mesFiltro, setMesFiltro] = useState('');
+
+  const mesesDisponiveis = Array.from(new Set((proposals||[]).map(p => (p.data||'').slice(0,7)).filter(Boolean))).sort().reverse();
+
+  const proposalsFiltradas = mesFiltro ? (proposals||[]).filter(p => (p.data||'').startsWith(mesFiltro)) : (proposals||[]);
+
+  const all = statsFor(proposalsFiltradas);
   const byStatus = {};
-  STATUS_OPTIONS.forEach(s => { byStatus[s] = statsFor(proposals.filter(p => (p.status||STATUS_OPTIONS[0])===s)); });
+  STATUS_OPTIONS.forEach(s => { byStatus[s] = statsFor(proposalsFiltradas.filter(p => (p.status||STATUS_OPTIONS[0])===s)); });
 
   const totalValorGeral = all.total || 0;
   const b = all.breakdown;
   const breakdownTotal = (b.locacao + b.seguro + b.frete) || 0;
 
-  const sublocProps = proposals.filter(p => p.sublocacao);
+  const sublocProps = proposalsFiltradas.filter(p => p.sublocacao);
   const sublocStats = statsFor(sublocProps);
   const sublocQtdMaquinas = sublocProps.reduce((s,p)=> s + (p.itens||[]).reduce((si,it)=> si + (parseInt(it.qtd)||1), 0), 0);
+
+  // Comparativo mês a mês — independe do filtro acima, sempre mostra o histórico completo
+  const porMes = {};
+  (proposals||[]).forEach(p => {
+    const m = (p.data||'').slice(0,7);
+    if(!m) return;
+    if(!porMes[m]) porMes[m] = {count:0, total:0};
+    porMes[m].count += 1;
+    porMes[m].total += proposalTotal(p);
+  });
+  const mesesOrdenados = Object.keys(porMes).sort().reverse();
+  const maiorTotalMes = mesesOrdenados.reduce((mx,m)=>Math.max(mx, porMes[m].total), 0);
+  const fmtMesLabel = (m) => {
+    const [ano,mes] = m.split('-');
+    const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    return `${nomes[parseInt(mes)-1]}/${ano}`;
+  };
 
   return (
     <div>
@@ -3549,14 +3572,48 @@ function FaturamentoTab({proposals}){
           <h1>Análise de Faturamento</h1>
           <p>Panorama de todas as propostas geradas, separadas por status.</p>
         </div>
+        <div>
+          <select value={mesFiltro} onChange={e=>setMesFiltro(e.target.value)}>
+            <option value="">Todos os períodos</option>
+            {mesesDisponiveis.map(m=><option key={m} value={m}>{fmtMesLabel(m)}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="stat-hero">
-        <div className="label">Total de propostas (todos os status)</div>
+        <div className="label">{mesFiltro ? `Propostas em ${fmtMesLabel(mesFiltro)}` : 'Total de propostas (todos os status)'}</div>
         <div className="row">
           <div><div className="big">{all.count}</div><div className="small">propostas</div></div>
           <div><div className="big">{fmtMoney(all.avg)}</div><div className="small">valor médio por proposta</div></div>
           <div><div className="big">{fmtMoney(all.total)}</div><div className="small">valor total geral</div></div>
+        </div>
+      </div>
+
+      {/* Comparativo mês a mês */}
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-head"><h2>Comparativo mês a mês</h2></div>
+        <div className="card-body">
+          {mesesOrdenados.length===0 ? (
+            <p className="hint">Nenhuma proposta com data cadastrada ainda.</p>
+          ) : (
+            <table className="rtable">
+              <thead><tr><th>Mês</th><th>Propostas</th><th>Valor total</th><th></th></tr></thead>
+              <tbody>
+                {mesesOrdenados.map(m=>(
+                  <tr key={m} style={m===mesFiltro?{background:'#FDECDA'}:undefined}>
+                    <td data-label="Mês"><b>{fmtMesLabel(m)}</b></td>
+                    <td data-label="Propostas">{porMes[m].count}</td>
+                    <td className="mono" data-label="Valor total">{fmtMoney(porMes[m].total)}</td>
+                    <td style={{width:'35%'}}>
+                      <div className="value-bar" style={{height:8}}>
+                        <div style={{width:`${maiorTotalMes ? (porMes[m].total/maiorTotalMes*100) : 0}%`, background:'var(--blue)'}}></div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -3616,7 +3673,7 @@ function FaturamentoTab({proposals}){
               <div><div className="big" style={{color:'#7B3FBF'}}>{fmtMoney(sublocStats.total)}</div><div className="small" style={{color:'#8A5FB0'}}>valor total envolvido</div></div>
             </div>
           </div>
-          {sublocProps.length === 0 && <p style={{fontSize:12.5, color:'var(--muted)', margin:'10px 0 0'}}>Nenhuma proposta marcada como sublocação até o momento.</p>}
+          {sublocProps.length === 0 && <p style={{fontSize:12.5, color:'var(--muted)', margin:'10px 0 0'}}>Nenhuma proposta marcada como sublocação {mesFiltro?'nesse período':'até o momento'}.</p>}
         </div>
       </div>
 
