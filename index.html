@@ -2,8 +2,19 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>AWP Plataformas — Sistema de Locação</title>
+
+<!-- PWA: instalável como app -->
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#0F223A">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AWP Locação">
+<meta name="mobile-web-app-capable" content="yes">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Dancing+Script:wght@500;700&family=Great+Vibes&family=Sacramento&display=swap" rel="stylesheet">
 <style>
@@ -473,6 +484,18 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useMemo } = React;
 
+/* ---------------- PWA: service worker + prompt de instalação ---------------- */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+  });
+}
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+});
+
 /* ---------------- Helpers ---------------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -808,6 +831,7 @@ const IconAlertTriangle = (p)=><Icon d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.
 const IconBarChart = (p)=><Icon d="M12 20V10 M18 20V4 M6 20v-4 M3 20h18" {...p}/>;
 const IconLogOut = (p)=><Icon d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9" {...p}/>;
 const IconDownload = (p)=><Icon d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3" {...p}/>;
+const IconSmartphone = (p)=><Icon d="M17 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z M11 18h2" {...p}/>;
 const IconClipboard = (p)=><Icon d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2 M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" {...p}/>;
 const IconUpload = (p)=><Icon d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12" {...p}/>;
 const IconReceipt = (p)=><Icon d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1z M8 7h8 M8 11h8 M8 15h5" {...p}/>;
@@ -1044,6 +1068,61 @@ function normalizeCloudData(raw){
 }
 
 /* ---------------- Confirm modal ---------------- */
+/* ---------------- Instalar como app (PWA) ---------------- */
+function InstalarAppButton({variant}){
+  const [showHelp, setShowHelp] = useState(false);
+  const [jaInstalado, setJaInstalado] = useState(false);
+
+  useEffect(()=>{
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    setJaInstalado(standalone);
+  }, []);
+
+  if(jaInstalado) return null;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+  const handleClick = async () => {
+    if(deferredInstallPrompt){
+      deferredInstallPrompt.prompt();
+      try{ await deferredInstallPrompt.userChoice; }catch(e){}
+      deferredInstallPrompt = null;
+    } else {
+      setShowHelp(true);
+    }
+  };
+
+  const btnClass = variant === 'sidebar' ? 'btn btn-secondary btn-sm' : 'mobile-home-tile';
+
+  return (
+    <>
+      {variant === 'sidebar' ? (
+        <button className={btnClass} style={{width:'100%', justifyContent:'center', marginTop:8}} onClick={handleClick}>
+          <IconSmartphone width="15" height="15"/>Instalar app
+        </button>
+      ) : (
+        <div className={btnClass} onClick={handleClick}>
+          <div className="tile-icon"><IconSmartphone/></div>
+          <span>Instalar app</span>
+        </div>
+      )}
+      {showHelp && (
+        <div className="modal-backdrop" onClick={()=>setShowHelp(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <h3>Instalar o app</h3>
+            {isIOS ? (
+              <p>No iPhone/iPad: toque no ícone de compartilhar <b>(⬆️ dentro de um quadrado)</b> na barra do Safari, role e escolha <b>"Adicionar à Tela de Início"</b>.</p>
+            ) : (
+              <p>Abra o menu do navegador (geralmente ⋮ no canto superior) e escolha <b>"Instalar app"</b> ou <b>"Adicionar à tela inicial"</b>. Se não aparecer essa opção, o app já pode estar instalado, ou seu navegador ainda não suporta instalação.</p>
+            )}
+            <div className="row"><button className="btn btn-primary" onClick={()=>setShowHelp(false)}>Entendi</button></div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ConfirmModal({open, title, text, onConfirm, onCancel}){
   if(!open) return null;
   return (
@@ -5387,6 +5466,7 @@ function App(){
               </div>
             );
           })}
+          <InstalarAppButton variant="mobile"/>
         </div>
         <button className="mobile-home-logout" onClick={()=>setCurrentUser(null)}>
           <IconLogOut width="15" height="15"/>Sair da conta
@@ -5416,6 +5496,7 @@ function App(){
           <div className="who"><b>{currentUser}</b><span>Logado</span></div>
           <button title="Sair" onClick={()=>setCurrentUser(null)}><IconLogOut width="15" height="15"/></button>
         </div>
+        <div style={{padding:'0 12px'}}><InstalarAppButton variant="sidebar"/></div>
         <div className="sidebar-foot">
           <div className="sync-indicator">
             <span className={`sync-dot ${cloudStatus}`}></span>
