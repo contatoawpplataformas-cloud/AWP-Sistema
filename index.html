@@ -500,6 +500,8 @@ window.addEventListener('beforeinstallprompt', (e) => {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const todayISO = () => new Date().toISOString().slice(0,10);
 const fmtDateBR = (iso) => { if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; };
+const NOMES_MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const fmtMesAno = (yyyyMm) => { if(!yyyyMm) return ''; const [y,m] = yyyyMm.split('-'); return `${NOMES_MESES[parseInt(m)-1]}/${y}`; };
 // Converte um timestamp ISO (salvo em UTC) para data/hora no fuso do navegador de quem está vendo (ex: Brasília)
 const fmtDataHoraLocal = (isoString) => {
   if(!isoString) return { data:'', hora:'' };
@@ -4313,21 +4315,29 @@ function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete, 
   const [current, setCurrent] = useState(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('todos');
+  const [monthFilter, setMonthFilter] = useState('todos');
   const [confirmDel, setConfirmDel] = useState(null);
 
   const effStatus = c => isContaVencida(c, 'Pendente') ? 'Vencido' : (c.status||'Pendente');
 
   const faturasSemConta = !isPagar ? (faturas||[]).filter(f => !(items||[]).some(c=>c.faturaId===f.id)) : [];
 
-  const filtered = (items||[]).slice()
+  const mesesDisponiveis = Array.from(new Set((items||[]).map(c=>c.dataVencimento).filter(Boolean).map(d=>d.slice(0,7)))).sort().reverse();
+
+  const byMonth = (items||[]).filter(c => monthFilter==='todos' || (c.dataVencimento||'').slice(0,7)===monthFilter);
+
+  const filtered = byMonth.slice()
     .sort((a,b)=> (a.dataVencimento||'').localeCompare(b.dataVencimento||''))
     .filter(c => (c.descricao||'').toLowerCase().includes(query.toLowerCase()) || (c.contraparte||'').toLowerCase().includes(query.toLowerCase()))
     .filter(c => statusFilter==='todos' || effStatus(c)===statusFilter);
 
-  const totalPendente = (items||[]).filter(c=>effStatus(c)==='Pendente').reduce((s,c)=>s+(parseFloat(c.valor)||0),0);
-  const totalVencido = (items||[]).filter(c=>effStatus(c)==='Vencido').reduce((s,c)=>s+(parseFloat(c.valor)||0),0);
+  const totalPendente = byMonth.filter(c=>effStatus(c)==='Pendente').reduce((s,c)=>s+(parseFloat(c.valor)||0),0);
+  const totalVencido = byMonth.filter(c=>effStatus(c)==='Vencido').reduce((s,c)=>s+(parseFloat(c.valor)||0),0);
   const inicioMes = todayISO().slice(0,7);
-  const totalPagoMes = (items||[]).filter(c=>c.status===statusPago && (c.dataPagamento||'').startsWith(inicioMes)).reduce((s,c)=>s+(parseFloat(c.valor)||0),0);
+  const mesRefLabel = monthFilter==='todos' ? `em ${fmtMesAno(inicioMes)}` : `em ${fmtMesAno(monthFilter)}`;
+  const totalPagoMes = monthFilter==='todos'
+    ? (items||[]).filter(c=>c.status===statusPago && (c.dataPagamento||'').startsWith(inicioMes)).reduce((s,c)=>s+(parseFloat(c.valor)||0),0)
+    : byMonth.filter(c=>c.status===statusPago).reduce((s,c)=>s+(parseFloat(c.valor)||0),0);
 
   const changeStatusQuick = (c, newStatus) => {
     const patch = {...c, status:newStatus};
@@ -4371,7 +4381,7 @@ function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete, 
           <div className="card-body"><div className="stat-card-title">Vencido</div><div className="stat-card-count">{fmtMoney(totalVencido)}</div></div>
         </div>
         <div className="card stat-card" style={{borderTopColor:'var(--good)'}}>
-          <div className="card-body"><div className="stat-card-title">{isPagar?'Pago':'Recebido'} no mês</div><div className="stat-card-count">{fmtMoney(totalPagoMes)}</div></div>
+          <div className="card-body"><div className="stat-card-title">{isPagar?'Pago':'Recebido'} {mesRefLabel}</div><div className="stat-card-count">{fmtMoney(totalPagoMes)}</div></div>
         </div>
       </div>
 
@@ -4379,10 +4389,16 @@ function ContasFinanceirasTab({tipo, items, settings, notify, onSave, onDelete, 
         <IconSearch width="16" height="16" style={{color:'var(--muted)'}}/>
         <input placeholder="Buscar por descrição ou contraparte..." value={query} onChange={e=>setQuery(e.target.value)}/>
       </div>
-      <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{marginBottom:14, maxWidth:220}}>
-        <option value="todos">Todos os status</option>
-        {STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
-      </select>
+      <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:14}}>
+        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{maxWidth:220}}>
+          <option value="todos">Todos os status</option>
+          {STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={monthFilter} onChange={e=>setMonthFilter(e.target.value)} style={{maxWidth:220}}>
+          <option value="todos">Todos os meses</option>
+          {mesesDisponiveis.map(m=><option key={m} value={m}>{fmtMesAno(m)}</option>)}
+        </select>
+      </div>
 
       <div className="card">
         {filtered.length===0 ? (
