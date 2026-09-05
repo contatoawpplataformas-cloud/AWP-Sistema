@@ -323,6 +323,7 @@
   .login-selected{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding:10px 12px;background:var(--blue-light);border-radius:10px;}
   .login-selected b{flex:1;text-align:left;font-size:14px;}
   .login-pass .field{text-align:left;}
+  .login-users .field{text-align:left;}
   .login-error{color:var(--danger);font-size:12.5px;margin-bottom:12px;text-align:left;}
 
   /* ---------- Assinatura: geração a partir do nome (estilo Autentique) ---------- */
@@ -931,12 +932,16 @@ function Login({users, onLogin, onChangePassword, notify}){
 
         {!selected ? (
           <div className="login-users">
-            {userList.map(u=>(
-              <button key={u.name} className="login-user-btn" onClick={()=>{setSelected(u.name); setError(''); setMode('login');}}>
-                <span className="login-avatar">{u.name.split(' ').map(p=>p[0]).slice(0,2).join('')}</span>
-                {u.name}
-              </button>
-            ))}
+            <div className="field">
+              <label>Usuário</label>
+              <select
+                defaultValue=""
+                onChange={e=>{ if(e.target.value){ setSelected(e.target.value); setError(''); setMode('login'); } }}
+              >
+                <option value="" disabled>Selecionar usuário</option>
+                {userList.map(u=><option key={u.name} value={u.name}>{u.name}</option>)}
+              </select>
+            </div>
           </div>
         ) : mode==='login' ? (
           <div className="login-pass">
