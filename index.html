@@ -357,8 +357,8 @@
   .spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;}
   @keyframes spin{to{transform:rotate(360deg);}}
 
-  .modal-backdrop{position:fixed;inset:0;background:rgba(15,25,45,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;}
-  .modal{background:#fff;border-radius:12px;max-width:400px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.3);}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(15,25,45,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;overflow-y:auto;}
+  .modal{background:#fff;border-radius:12px;max-width:400px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:calc(100vh - 40px);overflow-y:auto;}
   .modal h3{margin:0 0 8px;font-size:15.5px;}
   .modal p{margin:0 0 18px;font-size:13.5px;color:var(--muted);line-height:1.5;}
   .modal .row{display:flex;gap:8px;justify-content:flex-end;}
@@ -5260,6 +5260,7 @@ function App(){
     let settings = prev.settings;
     let faturas = prev.faturas;
     let contasReceber = prev.contasReceber;
+    let machines = prev.machines;
     if(isNew){
       const usedNum = parseInt(prop.numero);
       const nextNum = (!isNaN(usedNum) && usedNum >= (prev.settings.nextProposalNumber||1)) ? usedNum+1 : (prev.settings.nextProposalNumber||1);
@@ -5272,7 +5273,16 @@ function App(){
       const novaContaReceber = {...gerarContaReceberDeFatura(novaFatura), id: uid(), createdAt: Date.now()};
       contasReceber = [...(prev.contasReceber||[]), novaContaReceber];
     }
-    return {...prev, proposals, faturas, contasReceber, settings};
+    // Quando a proposta é marcada como "Concluída" (equipamento retornou), as máquinas usadas
+    // nela voltam automaticamente para o status "Manutenção" — evita esquecer de atualizar na mão.
+    const statusAnterior = isNew ? null : (prev.proposals.find(p=>p.id===finalProp.id) || {}).status;
+    if(finalProp.status === 'Concluída' && statusAnterior !== 'Concluída'){
+      const idsEquipamentos = new Set((finalProp.itens||[]).map(it=>it.machineId).filter(Boolean));
+      if(idsEquipamentos.size){
+        machines = prev.machines.map(m => idsEquipamentos.has(m.id) ? {...m, status:'Manutenção'} : m);
+      }
+    }
+    return {...prev, proposals, faturas, contasReceber, machines, settings};
   });
   const deleteProposal = (id) => persistAndSet(prev => ({...prev, proposals: prev.proposals.filter(p=>p.id!==id)}));
 
