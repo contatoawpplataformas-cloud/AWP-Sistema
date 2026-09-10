@@ -1750,6 +1750,7 @@ function novaProposta(settings, clients){
     autentiqueEnviadoEm: '',
     numeroBase: String(settings.nextProposalNumber || 1),
     propostaOrigemId: null,
+    treinamentoNecessario: '',
     assinaturaAwp: null,
     assinaturaCliente: null,
     createdAt: null
@@ -2017,8 +2018,26 @@ function PropostaForm({clients, machines, settings, initial, onCancel, onSave, n
           </div>
         </div>
       </div>
+
+      {!prop.propostaOrigemId && (
+        <div className="card">
+          <div className="card-head"><h2><span className="num">7</span>Informações complementares</h2></div>
+          <div className="card-body">
+            <div className="field" style={{maxWidth:320}}>
+              <label>Necessita de treinamento de operadores?</label>
+              <select value={prop.treinamentoNecessario} onChange={e=>set('treinamentoNecessario', e.target.value)}>
+                <option value="">— Selecionar —</option>
+                <option value="Sim">Sim</option>
+                <option value="Não">Não</option>
+              </select>
+              <div className="hint">Aparece só nas propostas iniciais — não entra nas renovações. Ao recusar, o PDF já inclui a isenção de responsabilidade padrão.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card">
-        <div className="card-head"><h2><span className="num">7</span>Devolução e renovação</h2></div>
+        <div className="card-head"><h2><span className="num">{prop.propostaOrigemId ? 7 : 8}</span>Devolução e renovação</h2></div>
         <div className="card-body">
           <div className="field">
             <textarea rows="4" value={prop.textoDevolucao} onChange={e=>set('textoDevolucao', e.target.value)}/>
@@ -2171,13 +2190,26 @@ function ProposalDocument({prop, settings, total}){
           </ul>
         </div>
 
+        {!prop.propostaOrigemId && (
+          <div className="doc-sec">
+            <div className="doc-sec-title"><span className="n">7</span>Informações complementares</div>
+            <p className="doc-text" style={{fontWeight:700, marginBottom:6}}>Treinamento de Operadores</p>
+            <p className="doc-text" style={{marginBottom:8}}>
+              Necessita de treinamento? &nbsp; (<CheckBox checked={prop.treinamentoNecessario==='Sim'}/>) Sim &nbsp;&nbsp;&nbsp; (<CheckBox checked={prop.treinamentoNecessario==='Não'}/>) Não
+            </p>
+            <p className="doc-text" style={{fontSize:10.5}}>
+              Optando pela recusa, afirmamos que estamos cientes dos requisitos referente à treinamento de operadores e que a AWP Plataformas está isenta de toda e qualquer responsabilidade legal referente a este quesito, inclusive acidentes e sinistros de qualquer natureza que possa advir da operação inadequada do referido equipamento.
+            </p>
+          </div>
+        )}
+
         <div className="doc-sec">
-          <div className="doc-sec-title"><span className="n">7</span>Devolução e renovação</div>
+          <div className="doc-sec-title"><span className="n">{prop.propostaOrigemId ? 7 : 8}</span>Devolução e renovação</div>
           <p className="doc-text">{prop.textoDevolucao}</p>
         </div>
 
         <div className="doc-sec">
-          <div className="doc-sec-title"><span className="n">8</span>Aceite da proposta</div>
+          <div className="doc-sec-title"><span className="n">{prop.propostaOrigemId ? 8 : 9}</span>Aceite da proposta</div>
           <p className="doc-text">Ao assinar esta proposta, as partes declaram ciência das condições comerciais, operacionais e de segurança nela descritas, autorizando a emissão do contrato de locação.</p>
           <div className="doc-sign-cols">
             <div>
