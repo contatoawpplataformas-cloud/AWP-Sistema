@@ -4769,10 +4769,28 @@ function StatCard({title, stats, colorVar}){
   );
 }
 
-function FaturamentoTab({proposals}){
+function FaturamentoTab({proposals, avarias}){
   const [mesFiltro, setMesFiltro] = useState('');
 
-  const mesesDisponiveis = Array.from(new Set((proposals||[]).map(p => (p.data||'').slice(0,7)).filter(Boolean))).sort().reverse();
+  // Avarias entram no faturamento como uma forma própria de faturamento (relatórios cancelados ficam de fora)
+  const avariasValidas = (avarias||[]).filter(a => a.status !== 'Cancelado');
+  const mesesDisponiveis = Array.from(new Set([
+    ...(proposals||[]).map(p => (p.data||'').slice(0,7)),
+    ...avariasValidas.map(a => (a.data||'').slice(0,7))
+  ].filter(Boolean))).sort().reverse();
+  const avariasFiltradas = mesFiltro ? avariasValidas.filter(a => (a.data||'').startsWith(mesFiltro)) : avariasValidas;
+  const avStats = avariasFiltradas.reduce((acc,a)=>{
+    const t = avariaTotais(a);
+    acc.count += 1; acc.total += t.total; acc.maoObra += t.maoObra; acc.pecas += t.pecas; acc.insumos += t.insumos;
+    if(a.status==='Pago') acc.recebido += t.total; else acc.aberto += t.total;
+    if(a.assinaturaCliente) acc.assinados += 1;
+    return acc;
+  }, {count:0, total:0, maoObra:0, pecas:0, insumos:0, recebido:0, aberto:0, assinados:0});
+  const avPorStatus = AVARIA_STATUS_OPTIONS.filter(st=>st!=='Cancelado').map(st => {
+    const lista = avariasFiltradas.filter(a=>a.status===st);
+    return { status: st, count: lista.length, total: lista.reduce((x,a)=>x+avariaTotais(a).total,0) };
+  });
+  const avCanceladas = (mesFiltro ? (avarias||[]).filter(a => (a.data||'').startsWith(mesFiltro)) : (avarias||[])).filter(a=>a.status==='Cancelado');
 
   const proposalsFiltradas = mesFiltro ? (proposals||[]).filter(p => (p.data||'').startsWith(mesFiltro)) : (proposals||[]);
 
@@ -4781,8 +4799,9 @@ function FaturamentoTab({proposals}){
   STATUS_OPTIONS.forEach(s => { byStatus[s] = statsFor(proposalsFiltradas.filter(p => (p.status||STATUS_OPTIONS[0])===s)); });
 
   const totalValorGeral = all.total || 0;
-  const b = all.breakdown;
-  const breakdownTotal = (b.locacao + b.seguro + b.frete) || 0;
+  const b = {...all.breakdown, avarias: avStats.total};
+  const breakdownTotal = (b.locacao + b.seguro + b.frete + b.avarias) || 0;
+  const faturamentoTotal = all.total + avStats.total;
 
   const sublocProps = proposalsFiltradas.filter(p => p.sublocacao);
   const sublocStats = statsFor(sublocProps);
@@ -4793,12 +4812,19 @@ function FaturamentoTab({proposals}){
   (proposals||[]).forEach(p => {
     const m = (p.data||'').slice(0,7);
     if(!m) return;
-    if(!porMes[m]) porMes[m] = {count:0, total:0};
+    if(!porMes[m]) porMes[m] = {count:0, total:0, avCount:0, avTotal:0};
     porMes[m].count += 1;
     porMes[m].total += proposalTotal(p);
   });
+  avariasValidas.forEach(a => {
+    const m = (a.data||'').slice(0,7);
+    if(!m) return;
+    if(!porMes[m]) porMes[m] = {count:0, total:0, avCount:0, avTotal:0};
+    porMes[m].avCount += 1;
+    porMes[m].avTotal += avariaTotais(a).total;
+  });
   const mesesOrdenados = Object.keys(porMes).sort().reverse();
-  const maiorTotalMes = mesesOrdenados.reduce((mx,m)=>Math.max(mx, porMes[m].total), 0);
+  const maiorTotalMes = mesesOrdenados.reduce((mx,m)=>Math.max(mx, porMes[m].total + porMes[m].avTotal), 0);
   const fmtMesLabel = (m) => {
     const [ano,mes] = m.split('-');
     const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
@@ -4810,7 +4836,7 @@ function FaturamentoTab({proposals}){
       <div className="page-head">
         <div>
           <h1>Análise de Faturamento</h1>
-          <p>Panorama de todas as propostas geradas, separadas por status.</p>
+          <p>Panorama das propostas (locações) e dos relatórios de avaria cobrados.</p>
         </div>
         <div>
           <select value={mesFiltro} onChange={e=>setMesFiltro(e.target.value)}>
@@ -4827,6 +4853,11 @@ function FaturamentoTab({proposals}){
           <div><div className="big">{fmtMoney(all.avg)}</div><div className="small">valor médio por proposta</div></div>
           <div><div className="big">{fmtMoney(all.total)}</div><div className="small">valor total geral</div></div>
         </div>
+        <div className="row" style={{marginTop:12, paddingTop:12, borderTop:'1px solid rgba(255,255,255,.18)'}}>
+          <div><div className="big">{avStats.count}</div><div className="small">relatório(s) de avaria</div></div>
+          <div><div className="big">{fmtMoney(avStats.total)}</div><div className="small">faturado como avaria</div></div>
+          <div><div className="big">{fmtMoney(faturamentoTotal)}</div><div className="small">faturamento total (locações + avarias)</div></div>
+        </div>
       </div>
 
       {/* Comparativo mês a mês */}
@@ -4837,16 +4868,20 @@ function FaturamentoTab({proposals}){
             <p className="hint">Nenhuma proposta com data cadastrada ainda.</p>
           ) : (
             <table className="rtable">
-              <thead><tr><th>Mês</th><th>Propostas</th><th>Valor total</th><th></th></tr></thead>
+              <thead><tr><th>Mês</th><th>Propostas</th><th>Valor locações</th><th>Avarias</th><th>Valor avarias</th><th>Total do mês</th><th></th></tr></thead>
               <tbody>
                 {mesesOrdenados.map(m=>(
                   <tr key={m} style={m===mesFiltro?{background:'#FDECDA'}:undefined}>
                     <td data-label="Mês"><b>{fmtMesLabel(m)}</b></td>
                     <td data-label="Propostas">{porMes[m].count}</td>
-                    <td className="mono" data-label="Valor total">{fmtMoney(porMes[m].total)}</td>
-                    <td style={{width:'35%'}}>
+                    <td className="mono" data-label="Valor locações">{fmtMoney(porMes[m].total)}</td>
+                    <td data-label="Avarias">{porMes[m].avCount}</td>
+                    <td className="mono" data-label="Valor avarias">{fmtMoney(porMes[m].avTotal)}</td>
+                    <td className="mono" data-label="Total do mês"><b>{fmtMoney(porMes[m].total + porMes[m].avTotal)}</b></td>
+                    <td style={{width:'22%'}}>
                       <div className="value-bar" style={{height:8}}>
-                        <div style={{width:`${maiorTotalMes ? (porMes[m].total/maiorTotalMes*100) : 0}%`, background:'var(--blue)'}}></div>
+                        <div style={{width:`${maiorTotalMes ? (porMes[m].total/maiorTotalMes*100) : 0}%`, background:'var(--blue)'}} title="Locações"></div>
+                        <div style={{width:`${maiorTotalMes ? (porMes[m].avTotal/maiorTotalMes*100) : 0}%`, background:'var(--danger)'}} title="Avarias"></div>
                       </div>
                     </td>
                   </tr>
@@ -4883,6 +4918,13 @@ function FaturamentoTab({proposals}){
                 <div className="stat-row"><span>% do faturamento</span><b>{breakdownTotal ? (b.frete/breakdownTotal*100).toFixed(1) : '0.0'}%</b></div>
               </div>
             </div>
+            <div className="card stat-card" style={{borderTopColor:'var(--danger)'}}>
+              <div className="card-body">
+                <div className="stat-card-title">Avarias (mau uso)</div>
+                <div className="stat-row"><span>Valor total</span><b>{fmtMoney(b.avarias)}</b></div>
+                <div className="stat-row"><span>% do faturamento</span><b>{breakdownTotal ? (b.avarias/breakdownTotal*100).toFixed(1) : '0.0'}%</b></div>
+              </div>
+            </div>
           </div>
           {breakdownTotal > 0 && (
             <div style={{marginTop:14}}>
@@ -4890,11 +4932,48 @@ function FaturamentoTab({proposals}){
                 {b.locacao>0 && <div style={{width:`${b.locacao/breakdownTotal*100}%`, background:'var(--blue)'}} title={`Locação: ${(b.locacao/breakdownTotal*100).toFixed(1)}%`}></div>}
                 {b.seguro>0 && <div style={{width:`${b.seguro/breakdownTotal*100}%`, background:'var(--good)'}} title={`Seguro: ${(b.seguro/breakdownTotal*100).toFixed(1)}%`}></div>}
                 {b.frete>0 && <div style={{width:`${b.frete/breakdownTotal*100}%`, background:'var(--orange)'}} title={`Frete: ${(b.frete/breakdownTotal*100).toFixed(1)}%`}></div>}
+                {b.avarias>0 && <div style={{width:`${b.avarias/breakdownTotal*100}%`, background:'var(--danger)'}} title={`Avarias: ${(b.avarias/breakdownTotal*100).toFixed(1)}%`}></div>}
               </div>
               <div className="value-bar-legend">
                 <div className="legend-item"><span className="dot" style={{background:'var(--blue)'}}></span>Locação <b>{fmtMoney(b.locacao)}</b></div>
                 <div className="legend-item"><span className="dot" style={{background:'var(--good)'}}></span>Seguro <b>{fmtMoney(b.seguro)}</b></div>
                 <div className="legend-item"><span className="dot" style={{background:'var(--orange)'}}></span>Frete <b>{fmtMoney(b.frete)}</b></div>
+                <div className="legend-item"><span className="dot" style={{background:'var(--danger)'}}></span>Avarias <b>{fmtMoney(b.avarias)}</b></div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Avarias — faturamento por mau uso */}
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-head"><h2>Avarias — cobranças por mau uso</h2></div>
+        <div className="card-body">
+          <div className="stat-hero" style={{background:'#FBEAE8', border:'1px solid #F2C9C4', color:'#5A1F18'}}>
+            <div className="label" style={{color:'var(--danger)'}}>{mesFiltro ? `Relatórios de avaria em ${fmtMesLabel(mesFiltro)}` : 'Relatórios de avaria (exceto cancelados)'}</div>
+            <div className="row">
+              <div><div className="big" style={{color:'var(--danger)'}}>{avStats.count}</div><div className="small" style={{color:'#9A4A40'}}>relatório(s) · {avStats.assinados} assinado(s) pelo cliente</div></div>
+              <div><div className="big" style={{color:'var(--danger)'}}>{fmtMoney(avStats.total)}</div><div className="small" style={{color:'#9A4A40'}}>valor total cobrado</div></div>
+              <div><div className="big" style={{color:'var(--good)'}}>{fmtMoney(avStats.recebido)}</div><div className="small" style={{color:'#9A4A40'}}>pago</div></div>
+              <div><div className="big" style={{color:'var(--orange-dark)'}}>{fmtMoney(avStats.aberto)}</div><div className="small" style={{color:'#9A4A40'}}>a receber</div></div>
+            </div>
+          </div>
+          {avStats.count === 0 ? (
+            <p style={{fontSize:12.5, color:'var(--muted)', margin:'10px 0 0'}}>Nenhum relatório de avaria {mesFiltro?'nesse período':'até o momento'}.</p>
+          ) : (
+            <div className="grid2" style={{marginTop:14, gap:'14px 20px'}}>
+              <div>
+                <div className="stat-card-title" style={{marginBottom:6}}>Composição</div>
+                <div className="stat-row"><span>Mão de obra</span><b>{fmtMoney(avStats.maoObra)}</b></div>
+                <div className="stat-row"><span>Peças</span><b>{fmtMoney(avStats.pecas)}</b></div>
+                <div className="stat-row"><span>Insumos</span><b>{fmtMoney(avStats.insumos)}</b></div>
+              </div>
+              <div>
+                <div className="stat-card-title" style={{marginBottom:6}}>Por status da cobrança</div>
+                {avPorStatus.map(x=>(
+                  <div key={x.status} className="stat-row"><span>{x.status} ({x.count})</span><b>{fmtMoney(x.total)}</b></div>
+                ))}
+                {avCanceladas.length>0 && <div className="hint" style={{marginTop:6}}>{avCanceladas.length} relatório(s) cancelado(s) não entram no faturamento.</div>}
               </div>
             </div>
           )}
@@ -6760,7 +6839,7 @@ function App(){
         {tab==='ordens' && <OrdensServicoTab proposals={data.proposals} settings={data.settings} currentUser={currentUser} os={data.os} onSaveOs={saveOs} onDeleteOs={deleteOs} notify={notify}/>}
         {tab==='avarias' && <AvariasTab proposals={data.proposals} settings={data.settings} currentUser={currentUser} avarias={data.avarias||[]} contasReceber={data.contasReceber||[]} onSaveAvaria={saveAvaria} onDeleteAvaria={deleteAvaria} onLancarFinanceiro={lancarAvariaNoFinanceiro} notify={notify}/>}
         {tab==='faturas' && <FaturasTab faturas={data.faturas} settings={data.settings} notify={notify} onSaveFatura={saveFatura} onDeleteFatura={deleteFatura} openFaturaId={openFaturaId} onConsumeOpenFatura={()=>setOpenFaturaId(null)}/>}
-        {tab==='faturamento' && <FaturamentoTab proposals={data.proposals}/>}
+        {tab==='faturamento' && <FaturamentoTab proposals={data.proposals} avarias={data.avarias||[]}/>}
         {tab==='financeiro' && <FinanceiroModule
           settings={data.settings} notify={notify} onSaveSettings={saveSettings}
           contasPagar={data.contasPagar||[]} contasReceber={data.contasReceber||[]} extratoOfx={data.extratoOfx||[]}
