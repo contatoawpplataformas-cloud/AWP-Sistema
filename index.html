@@ -267,6 +267,28 @@
     @page{margin:10mm;}
   }
 
+  /* ---------- Avarias ---------- */
+  .av-thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-top:14px;}
+  .av-thumb{border:1px solid var(--border);border-radius:9px;padding:8px;background:#fff;display:flex;flex-direction:column;gap:6px;}
+  .av-thumb-img{position:relative;height:130px;border-radius:6px;overflow:hidden;background:#F2F4F8;display:flex;align-items:center;justify-content:center;}
+  .av-thumb-img img{width:100%;height:100%;object-fit:cover;}
+  .av-thumb-num{position:absolute;top:6px;left:6px;background:var(--navy);color:#fff;font-size:11px;font-weight:700;border-radius:10px;padding:1px 8px;}
+  .av-thumb input{font-size:12.5px;padding:7px 9px;}
+  .av-thumb-actions{display:flex;justify-content:flex-end;gap:2px;}
+  .av-thumb-actions .icon-btn:disabled{opacity:.35;cursor:default;}
+  .av-total-bar{display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding:12px 14px;border-radius:9px;background:var(--navy);color:#fff;font-size:14px;}
+  .av-total-bar b{font-size:18px;}
+  .av-linhas td input{min-width:0;}
+  .av-fotos-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .av-foto{border:1px solid #DCE3ED;border-radius:6px;padding:6px;}
+  .av-foto-box{height:250px;display:flex;align-items:center;justify-content:center;background:#F7F9FC;border-radius:4px;overflow:hidden;}
+  .av-foto-box img{max-width:100%;max-height:250px;width:auto;height:auto;display:block;}
+  .av-foto-cap{font-size:10.5px;color:#3A4456;padding:6px 2px 0;line-height:1.4;}
+  .av-doc-total{margin:10px 0 14px auto;width:280px;font-size:11.5px;border:1px solid #DCE3ED;border-radius:6px;overflow:hidden;}
+  .av-doc-total > div{display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #EEF1F6;}
+  .av-doc-total > div.grand{background:var(--navy);color:#fff;font-weight:700;font-size:12.5px;border-bottom:none;}
+  .av-resp{font-size:11px;background:#FFF7EF;border-color:#F3D3B0;}
+
   /* ---------- OS - Ordem de Serviço ---------- */
   .os-doc{
     width:794px;max-width:100%;background:#fff;box-shadow:var(--shadow);border:1px solid var(--border);
@@ -527,7 +549,7 @@ const parseMoneyInput = (v) => {
 const itemSubtotal = (it) => parseMoneyInput(it.valorLocacao) + parseMoneyInput(it.seguro) + parseMoneyInput(it.frete);
 
 // Elementos que nunca devem ser cortados ao meio entre duas páginas do PDF
-const PDF_AVOID_SPLIT_SELECTOR = 'tr, .spec-card, .doc-signed-block, .doc-sign-cols, .doc-sign-grid-single, .os-row, .os-footer-grid .frow, .os-text-block, .doc-total-box, .doc-list li, .doc-text, .doc-intro, .doc-sec-title';
+const PDF_AVOID_SPLIT_SELECTOR = 'tr, .av-foto, .av-doc-total, .os-decl-grid, .spec-card, .doc-signed-block, .doc-sign-cols, .doc-sign-grid-single, .os-row, .os-footer-grid .frow, .os-text-block, .doc-total-box, .doc-list li, .doc-text, .doc-intro, .doc-sec-title';
 
 async function aguardarRenderizacaoCompleta(node){
   // Espera fontes carregarem e todas as imagens (logo, assinaturas) estarem totalmente decodificadas,
@@ -723,6 +745,7 @@ const DEFAULT_SETTINGS = {
   autentiqueProxyUrl: '',
   nextProposalNumber: 1,
   nextOsNumber: 1,
+  nextAvariaNumber: 1,
   nextFaturaNumber: 1,
   companyEmailFinanceiro: 'financeiro.awpplataformas@gmail.com',
   defaultDadosPagamento: 'Via boleto bancário em anexo.',
@@ -751,7 +774,7 @@ const DEFAULT_SETTINGS = {
     'Marketing','Serviços de terceiros','Outros'
   ].join('\n'),
   categoriasReceita: [
-    'Locação de equipamentos','Frete','Seguro','Assistência técnica','Venda de peças','Outros'
+    'Locação de equipamentos','Frete','Seguro','Assistência técnica','Venda de peças','Avarias e mau uso','Outros'
   ].join('\n')
 };
 
@@ -1013,6 +1036,7 @@ async function loadAppData(){
         machines: parsed.machines || [],
         proposals: parsed.proposals || [],
         os: parsed.os || [],
+        avarias: parsed.avarias || [],
         faturas: parsed.faturas || [],
         contasPagar: parsed.contasPagar || [],
         contasReceber: parsed.contasReceber || [],
@@ -1022,7 +1046,7 @@ async function loadAppData(){
       };
     }
   }catch(e){ /* key not found yet */ }
-  return { clients:[], machines:[], proposals:[], os:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[], users:[...USERS], settings: {...DEFAULT_SETTINGS} };
+  return { clients:[], machines:[], proposals:[], os:[], avarias:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[], users:[...USERS], settings: {...DEFAULT_SETTINGS} };
 }
 async function persist(data){
   try{
@@ -1065,6 +1089,7 @@ function normalizeCloudData(raw){
     machines: raw.machines || [],
     proposals: raw.proposals || [],
     os: raw.os || [],
+    avarias: raw.avarias || [],
     faturas: raw.faturas || [],
     contasPagar: raw.contasPagar || [],
     contasReceber: raw.contasReceber || [],
@@ -3602,6 +3627,819 @@ function OrdensServicoTab({proposals, settings, currentUser, os, onSaveOs, onDel
 }
 
 /* ==================================================================== */
+/* AVARIAS — Relatório de avarias por mau uso, vinculado ao contrato de locação */
+/* ==================================================================== */
+// As fotos NÃO ficam no documento principal (limite de 1 MB do Firestore). Cada foto é comprimida
+// no aparelho e gravada como um documento próprio na mesma coleção ("avaria-foto-<id>"); o relatório
+// guarda só a lista de referências {id, legenda}. Em modo local (sem nuvem), a foto fica embutida.
+const AVARIA_STATUS_OPTIONS = ['Em aberto','Enviado ao cliente','Aprovado pelo cliente','Contestado','Pago','Cancelado'];
+const AVARIA_STATUS_BADGE = {
+  'Em aberto':'badge-orange', 'Enviado ao cliente':'badge-blue', 'Aprovado pelo cliente':'badge-purple',
+  'Contestado':'badge-red', 'Pago':'badge-green', 'Cancelado':'badge-gray'
+};
+const AVARIA_MOMENTO_OPTIONS = ['Na devolução do equipamento','Em vistoria no local do cliente','Durante atendimento técnico (OS)','Outro'];
+const AVARIA_CATEGORIA_RECEITA = 'Avarias e mau uso';
+const AVARIA_FOTO_PREFIX = 'avaria-foto-';
+const AVARIA_FOTO_MAX_CHARS = 850000; // folga confortável abaixo do limite de 1 MB por documento
+const DEFAULT_TEXTO_RESPONSABILIDADE_AVARIA =
+  'As avarias descritas e registradas neste relatório foram constatadas no equipamento locado e decorrem de mau uso, ' +
+  'operação inadequada ou negligência durante o período de locação. Conforme as condições do contrato de locação, ' +
+  'os custos de reparo, peças e insumos necessários para restabelecer as condições originais do equipamento são de ' +
+  'responsabilidade da LOCATÁRIA.';
+
+const EMPTY_AV_LINHA = () => ({ id: uid(), qtde:'1', codigo:'', descricao:'', valorUnit:'' });
+
+function novaAvaria(settings, currentUser){
+  return {
+    id: null,
+    numero: String(settings.nextAvariaNumber || 1),
+    data: todayISO(),
+    status: AVARIA_STATUS_OPTIONS[0],
+    propostaId: '',
+    contratoNumero: '', propostaNumero: '', periodoLocacao: '', statusLocacao: '',
+    cliente: { razaoSocial:'', cnpj:'', endereco:'', responsavel:'', telefone:'', email:'' },
+    equipamentoLineId: '',
+    equipamento: '', modelo: '', marca: '', numeroSerie: '', patrimonio: '', horimetro: '',
+    dataConstatacao: todayISO(),
+    momentoConstatacao: AVARIA_MOMENTO_OPTIONS[0],
+    vistoriadoPor: currentUser || '',
+    descricao: '',
+    fotos: [],
+    horasMaoObra: '', valorHora: '',
+    pecas: [],
+    insumos: [],
+    observacoes: '',
+    textoResponsabilidade: DEFAULT_TEXTO_RESPONSABILIDADE_AVARIA,
+    contaReceberId: null,
+    createdAt: null
+  };
+}
+
+function avariaLinhaSubtotal(l){ return parseMoneyInput(l.qtde) * parseMoneyInput(l.valorUnit); }
+function avariaTotais(av){
+  const maoObra = parseMoneyInput(av.horasMaoObra) * parseMoneyInput(av.valorHora);
+  const pecas = (av.pecas||[]).reduce((s,l)=>s+avariaLinhaSubtotal(l),0);
+  const insumos = (av.insumos||[]).reduce((s,l)=>s+avariaLinhaSubtotal(l),0);
+  return { maoObra, pecas, insumos, total: maoObra + pecas + insumos };
+}
+function periodoDaProposta(p){
+  const inicios = (p.itens||[]).map(it=>it.periodoInicio).filter(Boolean).sort();
+  const fins = (p.itens||[]).map(it=>it.periodoFim).filter(Boolean).sort();
+  if(!inicios.length && !fins.length) return '';
+  return `${fmtDateBR(inicios[0])} a ${fmtDateBR(fins[fins.length-1])}`;
+}
+const fmtNumAvaria = (n) => `AV-${String(n||'').padStart(4,'0')}`;
+
+// ---- Fotos: compressão no aparelho + armazenamento ----
+function carregarImagemDeArquivo(file){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { resolve({img, url}); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não foi possível ler a imagem.')); };
+    img.src = url;
+  });
+}
+async function comprimirFotoAvaria(file){
+  const {img, url} = await carregarImagemDeArquivo(file);
+  try{
+    for(const maxLado of [1600, 1280, 1024, 800]){
+      const esc = Math.min(1, maxLado / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth*esc)), h = Math.max(1, Math.round(img.naturalHeight*esc));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,w,h);
+      ctx.drawImage(img, 0, 0, w, h);
+      for(const q of [0.8, 0.7, 0.6, 0.5]){
+        const out = canvas.toDataURL('image/jpeg', q);
+        if(out.length <= AVARIA_FOTO_MAX_CHARS) return out;
+      }
+    }
+    throw new Error('Foto grande demais mesmo após compressão.');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+async function salvarFotosAvariaNaNuvem(avariaId, fotos){
+  const db = getFirebaseDb();
+  if(!db) return;
+  await Promise.all(fotos.map(f =>
+    db.collection(FIREBASE_COLLECTION).doc(AVARIA_FOTO_PREFIX + f.id).set({
+      tipo: 'avaria-foto', avariaId, dataUrl: f.dataUrl, criadoEm: new Date().toISOString()
+    })
+  ));
+}
+async function excluirFotosAvariaDaNuvem(ids){
+  const db = getFirebaseDb();
+  if(!db || !ids.length) return;
+  await Promise.all(ids.map(id => db.collection(FIREBASE_COLLECTION).doc(AVARIA_FOTO_PREFIX + id).delete().catch(e=>console.error(e))));
+}
+// Devolve as fotos com o dataUrl preenchido (busca na nuvem as que só têm a referência)
+async function carregarFotosAvaria(fotosRefs){
+  const db = getFirebaseDb();
+  return Promise.all((fotosRefs||[]).map(async f => {
+    if(f.dataUrl) return {...f, salva:true};
+    if(!db) return {...f, salva:true, erro:true};
+    try{
+      const snap = await db.collection(FIREBASE_COLLECTION).doc(AVARIA_FOTO_PREFIX + f.id).get();
+      return snap.exists ? {...f, dataUrl: snap.data().dataUrl, salva:true} : {...f, salva:true, erro:true};
+    }catch(e){ console.error(e); return {...f, salva:true, erro:true}; }
+  }));
+}
+function useFotosAvaria(fotosRefs){
+  const [fotos, setFotos] = useState(null);
+  const chave = (fotosRefs||[]).map(f=>f.id).join('|');
+  useEffect(()=>{
+    let vivo = true;
+    setFotos(null);
+    carregarFotosAvaria(fotosRefs).then(r => { if(vivo) setFotos(r); });
+    return () => { vivo = false; };
+  }, [chave]);
+  // legendas podem mudar sem trocar as fotos
+  return fotos ? fotos.map(f => ({...f, legenda: ((fotosRefs||[]).find(x=>x.id===f.id)||{}).legenda || ''})) : null;
+}
+
+const IconCamera = (p)=><Icon d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" {...p}/>;
+const IconImage = (p)=><Icon d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M21 15l-5-5L5 21" {...p}/>;
+
+function AvariaLinhasTable({titulo, linhas, onChange, comCodigo}){
+  const upd = (id,k,v) => onChange(linhas.map(l=>l.id===id?{...l,[k]:v}:l));
+  const add = () => onChange([...linhas, EMPTY_AV_LINHA()]);
+  const del = (id) => onChange(linhas.filter(l=>l.id!==id));
+  const subtotal = linhas.reduce((s,l)=>s+avariaLinhaSubtotal(l),0);
+  return (
+    <div style={{marginTop:6}}>
+      {linhas.length>0 && (
+        <table className="rtable av-linhas">
+          <thead><tr>
+            <th style={{width:70}}>Qtde.</th>
+            {comCodigo && <th style={{width:130}}>Código</th>}
+            <th>Descrição</th><th style={{width:120}}>Valor unit.</th><th style={{width:110}}>Subtotal</th><th></th>
+          </tr></thead>
+          <tbody>
+            {linhas.map(l=>(
+              <tr key={l.id}>
+                <td data-label="Qtde."><input inputMode="decimal" value={l.qtde} onChange={e=>upd(l.id,'qtde',e.target.value)}/></td>
+                {comCodigo && <td data-label="Código"><input value={l.codigo} onChange={e=>upd(l.id,'codigo',e.target.value)}/></td>}
+                <td data-label="Descrição"><input value={l.descricao} onChange={e=>upd(l.id,'descricao',e.target.value)}/></td>
+                <td data-label="Valor unit."><input inputMode="decimal" placeholder="0,00" value={l.valorUnit} onChange={e=>upd(l.id,'valorUnit',e.target.value)}/></td>
+                <td data-label="Subtotal" className="mono">{fmtMoney(avariaLinhaSubtotal(l))}</td>
+                <td className="actions-cell"><button className="icon-btn del" onClick={()=>del(l.id)} title="Remover"><IconTrash/></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:10, gap:10, flexWrap:'wrap'}}>
+        <button className="btn btn-secondary btn-sm" onClick={add}><IconPlus width="13" height="13"/>Adicionar {titulo}</button>
+        {linhas.length>0 && <span className="hint" style={{margin:0}}>Subtotal: <b>{fmtMoney(subtotal)}</b></span>}
+      </div>
+    </div>
+  );
+}
+
+function AvariaFotosEditor({fotos, onChange, notify}){
+  const cameraRef = useRef(null);
+  const galeriaRef = useRef(null);
+  const [processando, setProcessando] = useState(0);
+
+  const adicionarArquivos = async (fileList) => {
+    const files = Array.from(fileList||[]).filter(f => (f.type||'').startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name||''));
+    if(!files.length) return;
+    setProcessando(n=>n+files.length);
+    const novas = [];
+    for(const file of files){
+      try{
+        const dataUrl = await comprimirFotoAvaria(file);
+        novas.push({ id: uid(), legenda: '', dataUrl, salva:false });
+      }catch(e){
+        console.error(e);
+        notify(`Não foi possível usar a foto "${file.name||''}". Tente outra.`);
+      }
+      setProcessando(n=>n-1);
+    }
+    if(novas.length) onChange(atual => [...atual, ...novas]);
+  };
+
+  const mover = (idx, dir) => onChange(atual => {
+    const arr = atual.slice(); const j = idx+dir;
+    if(j<0 || j>=arr.length) return arr;
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    return arr;
+  });
+
+  return (
+    <div>
+      <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+        <button className="btn btn-primary btn-sm" onClick={()=>cameraRef.current && cameraRef.current.click()}><IconCamera width="15" height="15"/>Tirar foto</button>
+        <button className="btn btn-secondary btn-sm" onClick={()=>galeriaRef.current && galeriaRef.current.click()}><IconImage width="15" height="15"/>Escolher da galeria</button>
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{display:'none'}}
+          onChange={e=>{ adicionarArquivos(e.target.files); e.target.value=''; }}/>
+        <input ref={galeriaRef} type="file" accept="image/*" multiple style={{display:'none'}}
+          onChange={e=>{ adicionarArquivos(e.target.files); e.target.value=''; }}/>
+      </div>
+      {processando>0 && <div className="hint" style={{marginTop:8}}>Processando {processando} foto(s)...</div>}
+      {fotos.length===0 && processando===0 && (
+        <div className="hint" style={{marginTop:10}}>Nenhuma foto adicionada. As fotos são reduzidas automaticamente para não pesar no sistema.</div>
+      )}
+      {fotos.length>0 && (
+        <div className="av-thumbs">
+          {fotos.map((f, idx)=>(
+            <div key={f.id} className="av-thumb">
+              <div className="av-thumb-img">
+                {f.dataUrl ? <img src={f.dataUrl} alt={`Foto ${idx+1}`}/> : <span className="hint">{f.erro ? 'Foto indisponível' : 'Carregando...'}</span>}
+                <span className="av-thumb-num">{idx+1}</span>
+              </div>
+              <input placeholder="Legenda (ex: braço amassado)" value={f.legenda||''}
+                onChange={e=>{ const v=e.target.value; onChange(atual=>atual.map(x=>x.id===f.id?{...x, legenda:v}:x)); }}/>
+              <div className="av-thumb-actions">
+                <button className="icon-btn" title="Mover para trás" disabled={idx===0} onClick={()=>mover(idx,-1)}><Icon d="M15 18l-6-6 6-6"/></button>
+                <button className="icon-btn" title="Mover para frente" disabled={idx===fotos.length-1} onClick={()=>mover(idx,1)}><Icon d="M9 18l6-6-6-6"/></button>
+                <button className="icon-btn del" title="Remover foto" onClick={()=>onChange(atual=>atual.filter(x=>x.id!==f.id))}><IconTrash/></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AvariaForm({proposals, settings, initial, onCancel, onSave, notify}){
+  const [av, setAv] = useState(initial);
+  const [fotos, setFotosState] = useState(initial.fotos && initial.fotos.length ? null : []);
+  const [showPreview, setShowPreview] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const set = (k,v) => setAv(o=>({...o, [k]:v}));
+  const setCli = (k,v) => setAv(o=>({...o, cliente:{...o.cliente, [k]:v}}));
+  const setFotos = (fnOrArr) => setFotosState(prev => typeof fnOrArr === 'function' ? fnOrArr(prev||[]) : fnOrArr);
+
+  useEffect(()=>{
+    if(initial.fotos && initial.fotos.length){
+      carregarFotosAvaria(initial.fotos).then(setFotosState);
+    }
+  }, []);
+
+  const linked = proposals.find(p=>p.id===av.propostaId);
+  const ativas = proposals.filter(p=>p.status==='Efetivada em andamento');
+  const encerradas = proposals.filter(p=>p.status==='Concluída');
+  const ordenar = (arr) => arr.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  const linkedForaDasListas = linked && !ativas.includes(linked) && !encerradas.includes(linked);
+
+  const aplicarEquipamento = (p, lineId) => {
+    const it = (p.itens||[]).find(x=>x.lineId===lineId) || (p.itens||[])[0];
+    if(!it) return {};
+    return {
+      equipamentoLineId: it.lineId || '',
+      equipamento: it.tipo || '', modelo: it.modelo || '', marca: it.marca || '',
+      numeroSerie: it.numeroSerie || '', patrimonio: it.patrimonio || '',
+      periodoLocacao: (it.periodoInicio || it.periodoFim) ? `${fmtDateBR(it.periodoInicio)} a ${fmtDateBR(it.periodoFim)}` : periodoDaProposta(p)
+    };
+  };
+
+  const selectProposta = (id) => {
+    const p = proposals.find(x=>x.id===id);
+    if(!p){ setAv(o=>({...o, propostaId:''})); return; }
+    const c = p.cliente || {};
+    setAv(o=>({
+      ...o, propostaId: id,
+      contratoNumero: p.numeroBase || p.numero, propostaNumero: p.numero, statusLocacao: p.status || '',
+      cliente: { razaoSocial: c.razaoSocial||'', cnpj: c.cnpj||'', endereco: c.endereco||'', responsavel: c.responsavel||'', telefone: c.telefone||'', email: c.email||'' },
+      ...aplicarEquipamento(p, null)
+    }));
+  };
+
+  const totais = avariaTotais(av);
+  const canGenerate = !!av.propostaId && (av.cliente.razaoSocial||'').trim().length>0 && fotos !== null;
+  const avComFotos = {...av, fotos: fotos||[]};
+
+  const salvar = async () => {
+    setSalvando(true);
+    try{ await onSave(avComFotos); }
+    finally{ setSalvando(false); }
+  };
+
+  if(showPreview){
+    return <AvariaPreview av={avComFotos} settings={settings} salvando={salvando} onBack={()=>setShowPreview(false)} onConfirmSave={salvar} notify={notify}/>;
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>{initial.id ? `Editar relatório ${fmtNumAvaria(av.numero)}` : 'Novo relatório de avarias'}</h1>
+          <p>Registro de mau uso vinculado ao contrato de locação.</p>
+        </div>
+        <div style={{display:'flex', gap:8}}>
+          <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+          <button className="btn btn-secondary" disabled={!canGenerate} onClick={()=>setShowPreview(true)}>
+            <IconEye width="15" height="15"/>Visualizar relatório
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">1</span>Vínculo com a locação</h2></div>
+        <div className="card-body">
+          <div className="field">
+            <label>Locação / contrato *</label>
+            <select value={av.propostaId} onChange={e=>selectProposta(e.target.value)}>
+              <option value="">— Selecionar locação —</option>
+              {ativas.length>0 && <optgroup label="Locações ativas">
+                {ordenar(ativas).map(p=><option key={p.id} value={p.id}>#{p.numero} — {p.cliente.razaoSocial}</option>)}
+              </optgroup>}
+              {encerradas.length>0 && <optgroup label="Locações encerradas">
+                {ordenar(encerradas).map(p=><option key={p.id} value={p.id}>#{p.numero} — {p.cliente.razaoSocial}</option>)}
+              </optgroup>}
+              {linkedForaDasListas && <option value={linked.id}>#{linked.numero} — {linked.cliente.razaoSocial} ({linked.status})</option>}
+            </select>
+            <div className="hint">Ao escolher a locação, os dados do cliente, do contrato e do equipamento são preenchidos automaticamente.</div>
+          </div>
+          {linked && (
+            <div className="hint" style={{background:'var(--blue-light)', color:'var(--blue)', padding:'8px 10px', borderRadius:7, marginTop:4}}>
+              Contrato nº {av.contratoNumero} · Proposta #{linked.numero} · {linked.status} · Período {periodoDaProposta(linked) || '—'}
+            </div>
+          )}
+          <div className="grid3" style={{marginTop:12}}>
+            <div className="field"><label>Data do relatório</label><input type="date" value={av.data} onChange={e=>set('data', e.target.value)}/></div>
+            <div className="field"><label>Status da cobrança</label>
+              <select value={av.status} onChange={e=>set('status', e.target.value)}>
+                {AVARIA_STATUS_OPTIONS.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Nº do relatório</label><input value={av.numero} onChange={e=>set('numero', e.target.value)}/></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">2</span>Cliente (locatária)</h2></div>
+        <div className="card-body">
+          <div className="grid2">
+            <div className="field"><label>Razão social</label><input value={av.cliente.razaoSocial} onChange={e=>setCli('razaoSocial', e.target.value)}/></div>
+            <div className="field"><label>CNPJ</label><input value={av.cliente.cnpj} onChange={e=>setCli('cnpj', e.target.value)}/></div>
+          </div>
+          <div className="field"><label>Endereço / local da obra</label><input value={av.cliente.endereco} onChange={e=>setCli('endereco', e.target.value)}/></div>
+          <div className="grid3">
+            <div className="field"><label>Responsável</label><input value={av.cliente.responsavel} onChange={e=>setCli('responsavel', e.target.value)}/></div>
+            <div className="field"><label>Telefone</label><input value={av.cliente.telefone} onChange={e=>setCli('telefone', e.target.value)}/></div>
+            <div className="field"><label>E-mail</label><input value={av.cliente.email} onChange={e=>setCli('email', e.target.value)}/></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">3</span>Equipamento avariado</h2></div>
+        <div className="card-body">
+          {linked && (linked.itens||[]).length>1 && (
+            <div className="field">
+              <label>Equipamento da locação</label>
+              <select value={av.equipamentoLineId} onChange={e=>setAv(o=>({...o, ...aplicarEquipamento(linked, e.target.value)}))}>
+                {linked.itens.map(it=><option key={it.lineId} value={it.lineId}>{it.tipo} – {it.modelo}{it.patrimonio ? ` (pat. ${it.patrimonio})` : ''}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="grid3">
+            <div className="field"><label>Equipamento</label><input value={av.equipamento} onChange={e=>set('equipamento', e.target.value)}/></div>
+            <div className="field"><label>Modelo</label><input value={av.modelo} onChange={e=>set('modelo', e.target.value)}/></div>
+            <div className="field"><label>Marca</label><input value={av.marca} onChange={e=>set('marca', e.target.value)}/></div>
+          </div>
+          <div className="grid4">
+            <div className="field"><label>Nº de série</label><input value={av.numeroSerie} onChange={e=>set('numeroSerie', e.target.value)}/></div>
+            <div className="field"><label>Patrimônio</label><input value={av.patrimonio} onChange={e=>set('patrimonio', e.target.value)}/></div>
+            <div className="field"><label>Horímetro</label><input value={av.horimetro} onChange={e=>set('horimetro', e.target.value)}/></div>
+            <div className="field"><label>Período da locação</label><input value={av.periodoLocacao} onChange={e=>set('periodoLocacao', e.target.value)}/></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">4</span>Constatação da avaria</h2></div>
+        <div className="card-body">
+          <div className="grid3">
+            <div className="field"><label>Data da constatação</label><input type="date" value={av.dataConstatacao} onChange={e=>set('dataConstatacao', e.target.value)}/></div>
+            <div className="field"><label>Momento</label>
+              <select value={av.momentoConstatacao} onChange={e=>set('momentoConstatacao', e.target.value)}>
+                {AVARIA_MOMENTO_OPTIONS.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Vistoriado por</label><input value={av.vistoriadoPor} onChange={e=>set('vistoriadoPor', e.target.value)}/></div>
+          </div>
+          <div className="field"><label>Descrição das avarias / mau uso</label>
+            <textarea rows="4" value={av.descricao} onChange={e=>set('descricao', e.target.value)} placeholder="Descreva os danos encontrados e o que indica mau uso (ex: cesto amassado por impacto, cabo de controle rompido, bateria descarregada a zero...)"/>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">5</span>Registro fotográfico</h2></div>
+        <div className="card-body">
+          {fotos === null
+            ? <div className="hint">Carregando fotos salvas...</div>
+            : <AvariaFotosEditor fotos={fotos} onChange={setFotos} notify={notify}/>}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">6</span>Custos de reparo</h2></div>
+        <div className="card-body">
+          <div style={{fontWeight:700, color:'var(--navy)', fontSize:13.5, marginBottom:6}}>Mão de obra</div>
+          <div className="grid3">
+            <div className="field"><label>Quantidade de horas</label><input inputMode="decimal" placeholder="Ex: 3,5" value={av.horasMaoObra} onChange={e=>set('horasMaoObra', e.target.value)}/></div>
+            <div className="field"><label>Valor da hora (R$)</label><input inputMode="decimal" placeholder="0,00" value={av.valorHora} onChange={e=>set('valorHora', e.target.value)}/></div>
+            <div className="field"><label>Subtotal mão de obra</label><input readOnly value={fmtMoney(totais.maoObra)}/></div>
+          </div>
+          <div className="divider"></div>
+          <div style={{fontWeight:700, color:'var(--navy)', fontSize:13.5}}>Peças</div>
+          <AvariaLinhasTable titulo="peça" comCodigo linhas={av.pecas} onChange={v=>set('pecas', v)}/>
+          <div className="divider"></div>
+          <div style={{fontWeight:700, color:'var(--navy)', fontSize:13.5}}>Insumos</div>
+          <AvariaLinhasTable titulo="insumo" linhas={av.insumos} onChange={v=>set('insumos', v)}/>
+          <div className="av-total-bar">
+            <span>Total a cobrar</span><b>{fmtMoney(totais.total)}</b>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2><span className="num">7</span>Observações e responsabilidade</h2></div>
+        <div className="card-body">
+          <div className="field"><label>Observações</label><textarea rows="3" value={av.observacoes} onChange={e=>set('observacoes', e.target.value)}/></div>
+          <div className="field"><label>Texto de responsabilidade (vai no relatório)</label>
+            <textarea rows="4" value={av.textoResponsabilidade} onChange={e=>set('textoResponsabilidade', e.target.value)}/>
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:'flex', justifyContent:'flex-end', gap:8, marginTop:18}}>
+        <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+        <button className="btn btn-secondary" disabled={!canGenerate} onClick={()=>setShowPreview(true)}>
+          <IconEye width="15" height="15"/>Visualizar relatório
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AvariaDocument({av, settings, fotos}){
+  const totais = avariaTotais(av);
+  const pecas = (av.pecas||[]).filter(l=>l.descricao||l.codigo||parseMoneyInput(l.valorUnit));
+  const insumos = (av.insumos||[]).filter(l=>l.descricao||parseMoneyInput(l.valorUnit));
+  const listaFotos = fotos || [];
+  return (
+    <div className="os-doc av-doc" id="avaria-doc-content">
+      <div className="os-header">
+        <img src={LOGO_NAVY} alt="AWP Plataformas"/>
+        <div className="os-header-text">
+          <h1>Relatório de Avarias — Mau Uso</h1>
+          <p>
+            {settings.brandName} | {settings.companyName} | CNPJ {settings.companyCnpj}<br/>
+            {settings.companyAddress}<br/>
+            E-mail: {settings.companyEmail} | Cel.: {settings.companyPhone}
+          </p>
+        </div>
+        <div className="os-header-num">
+          Nº do relatório<b>{fmtNumAvaria(av.numero)}</b>
+          {fmtDateBR(av.data)}
+        </div>
+      </div>
+
+      <div className="os-section-title" style={{textAlign:'left', marginTop:4}}>Locatária</div>
+      <div className="os-row"><span className="lbl">RAZÃO SOCIAL:</span><span className="val">{av.cliente.razaoSocial}</span></div>
+      <div className="os-grid2">
+        <div className="os-row"><span className="lbl">CNPJ:</span><span className="val">{av.cliente.cnpj}</span></div>
+        <div className="os-row"><span className="lbl">RESPONSÁVEL:</span><span className="val">{av.cliente.responsavel}</span></div>
+      </div>
+      <div className="os-row"><span className="lbl">ENDEREÇO / OBRA:</span><span className="val">{av.cliente.endereco}</span></div>
+      <div className="os-grid2">
+        <div className="os-row"><span className="lbl">TELEFONE:</span><span className="val">{av.cliente.telefone}</span></div>
+        <div className="os-row"><span className="lbl">E-MAIL:</span><span className="val">{av.cliente.email}</span></div>
+      </div>
+
+      <div className="os-section-title" style={{textAlign:'left'}}>Contrato de locação e equipamento</div>
+      <div className="os-grid2">
+        <div className="os-row"><span className="lbl">CONTRATO Nº:</span><span className="val">{av.contratoNumero}{av.propostaNumero && av.propostaNumero!==av.contratoNumero ? ` (proposta ${av.propostaNumero})` : ''}</span></div>
+        <div className="os-row"><span className="lbl">PERÍODO:</span><span className="val">{av.periodoLocacao}</span></div>
+      </div>
+      <div className="os-grid2">
+        <div className="os-row"><span className="lbl">EQUIPAMENTO:</span><span className="val">{[av.equipamento, av.modelo].filter(Boolean).join(' – ')}{av.marca ? ` (${av.marca})` : ''}</span></div>
+        <div className="os-row"><span className="lbl">Nº DE SÉRIE:</span><span className="val">{av.numeroSerie}</span></div>
+      </div>
+      <div className="os-grid2">
+        <div className="os-row"><span className="lbl">PATRIMÔNIO:</span><span className="val">{av.patrimonio}</span></div>
+        <div className="os-row"><span className="lbl">HORÍMETRO:</span><span className="val">{av.horimetro}</span></div>
+      </div>
+
+      <div className="os-section-title" style={{textAlign:'left'}}>Constatação</div>
+      <div className="os-grid2">
+        <div className="os-row"><span className="lbl">DATA:</span><span className="val">{fmtDateBR(av.dataConstatacao)}</span></div>
+        <div className="os-row"><span className="lbl">VISTORIADO POR:</span><span className="val">{av.vistoriadoPor}</span></div>
+      </div>
+      <div className="os-row"><span className="lbl">MOMENTO:</span><span className="val">{av.momentoConstatacao}</span></div>
+      <div className="os-section-title" style={{textAlign:'left'}}>Descrição das avarias</div>
+      <div className="os-text-block">{av.descricao}</div>
+
+      {listaFotos.length>0 && <>
+        <div className="os-section-title" style={{textAlign:'left'}}>Registro fotográfico</div>
+        <div className="av-fotos-grid">
+          {listaFotos.map((f,i)=>(
+            <div key={f.id} className="av-foto">
+              <div className="av-foto-box">{f.dataUrl ? <img src={f.dataUrl} alt={`Foto ${i+1}`}/> : <span style={{color:'#8894A8', fontSize:11}}>Foto indisponível</span>}</div>
+              <div className="av-foto-cap"><b>Foto {i+1}</b>{f.legenda ? ` — ${f.legenda}` : ''}</div>
+            </div>
+          ))}
+        </div>
+      </>}
+
+      <div className="os-section-title" style={{textAlign:'left', marginTop:18}}>Custos de reparo</div>
+      <table className="doc-table">
+        <thead><tr><th style={{width:90}}>Tipo</th><th>Descrição</th><th style={{width:60}}>Qtde.</th><th style={{width:100}}>Valor unit.</th><th style={{width:105}}>Subtotal</th></tr></thead>
+        <tbody>
+          {totais.maoObra>0 && (
+            <tr><td>Mão de obra</td><td>Horas técnicas de reparo</td><td>{av.horasMaoObra} h</td><td>{fmtMoney(parseMoneyInput(av.valorHora))}</td><td>{fmtMoney(totais.maoObra)}</td></tr>
+          )}
+          {pecas.map(l=>(
+            <tr key={l.id}><td>Peça</td><td>{l.codigo ? `${l.codigo} — ` : ''}{l.descricao}</td><td>{l.qtde}</td><td>{fmtMoney(parseMoneyInput(l.valorUnit))}</td><td>{fmtMoney(avariaLinhaSubtotal(l))}</td></tr>
+          ))}
+          {insumos.map(l=>(
+            <tr key={l.id}><td>Insumo</td><td>{l.descricao}</td><td>{l.qtde}</td><td>{fmtMoney(parseMoneyInput(l.valorUnit))}</td><td>{fmtMoney(avariaLinhaSubtotal(l))}</td></tr>
+          ))}
+          {totais.maoObra<=0 && pecas.length===0 && insumos.length===0 && (
+            <tr><td colSpan="5" style={{textAlign:'center', color:'#8894A8'}}>Sem custos lançados</td></tr>
+          )}
+        </tbody>
+      </table>
+      <div className="av-doc-total">
+        <div><span>Mão de obra</span><span>{fmtMoney(totais.maoObra)}</span></div>
+        <div><span>Peças</span><span>{fmtMoney(totais.pecas)}</span></div>
+        <div><span>Insumos</span><span>{fmtMoney(totais.insumos)}</span></div>
+        <div className="grand"><span>TOTAL A COBRAR</span><span>{fmtMoney(totais.total)}</span></div>
+      </div>
+
+      {av.observacoes && <>
+        <div className="os-section-title" style={{textAlign:'left'}}>Observações</div>
+        <div className="os-text-block">{av.observacoes}</div>
+      </>}
+
+      {av.textoResponsabilidade && (
+        <div className="os-text-block av-resp">
+          {av.textoResponsabilidade}{av.contratoNumero ? ` (Contrato de locação nº ${av.contratoNumero}.)` : ''}
+        </div>
+      )}
+
+      <div className="os-decl-grid">
+        <div>
+          <p>{settings.companyName}</p>
+          <div className="sign-line"></div>
+          <div className="small">{av.vistoriadoPor ? `${av.vistoriadoPor} — ` : ''}RESPONSÁVEL PELA VISTORIA</div>
+        </div>
+        <div>
+          <p>LOCATÁRIA — CIENTE</p>
+          <div className="sign-line"></div>
+          <div className="small">NOME, CPF E ASSINATURA DO RESPONSÁVEL — DATA</div>
+        </div>
+      </div>
+
+      <div className="doc-foot" style={{padding:'14px 0 0'}}>
+        {settings.companyName} | CNPJ {settings.companyCnpj} | {settings.companyAddress}
+      </div>
+    </div>
+  );
+}
+
+function nomeArquivoAvaria(av){
+  return `relatorio-avaria-${fmtNumAvaria(av.numero)}-${(av.cliente.razaoSocial||'cliente').slice(0,30)}.pdf`;
+}
+
+function AvariaPreview({av, settings, salvando, onBack, onConfirmSave, notify}){
+  const [generating, setGenerating] = useState(false);
+  const doDownloadPdf = async () => {
+    setGenerating(true);
+    const ok = await gerarPdfDoNode('avaria-doc-content', nomeArquivoAvaria(av), (msg)=>notify(msg));
+    setGenerating(false);
+    if(ok) notify('PDF gerado e baixado.');
+  };
+  return (
+    <div>
+      <div className="page-head no-print">
+        <div>
+          <h1>Pré-visualização do relatório</h1>
+          <p>Confira os dados e as fotos antes de salvar.</p>
+        </div>
+        <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+          <button className="btn btn-ghost" onClick={onBack} disabled={salvando}>Voltar e editar</button>
+          <button className="btn btn-secondary" onClick={doDownloadPdf} disabled={generating}>
+            <IconDownload width="15" height="15"/>{generating ? 'Gerando PDF...' : 'Baixar PDF'}
+          </button>
+          <button className="btn btn-primary" onClick={onConfirmSave} disabled={salvando}><IconCheck width="15" height="15"/>{salvando ? 'Salvando fotos...' : 'Salvar relatório'}</button>
+        </div>
+      </div>
+      <div className="proposal-doc-wrap">
+        <AvariaDocument av={av} settings={settings} fotos={av.fotos}/>
+      </div>
+    </div>
+  );
+}
+
+function AvariaViewer({current, settings, contaReceber, onBack, onEdit, onLancarFinanceiro, onStatus, notify}){
+  const [generating, setGenerating] = useState(false);
+  const fotos = useFotosAvaria(current.fotos);
+  const totais = avariaTotais(current);
+  const doDownloadPdf = async () => {
+    if(fotos === null){ notify('Aguarde as fotos carregarem.'); return; }
+    setGenerating(true);
+    const ok = await gerarPdfDoNode('avaria-doc-content', nomeArquivoAvaria(current), (msg)=>notify(msg));
+    setGenerating(false);
+    if(ok) notify('PDF gerado e baixado.');
+  };
+  return (
+    <div>
+      <div className="page-head no-print">
+        <div>
+          <h1>Relatório {fmtNumAvaria(current.numero)}</h1>
+          <p>{current.cliente.razaoSocial} · Contrato nº {current.contratoNumero}</p>
+        </div>
+        <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+          <button className="btn btn-ghost" onClick={onBack}>Voltar</button>
+          <button className="btn btn-secondary" onClick={onEdit}><IconEdit width="15" height="15"/>Editar</button>
+          <button className="btn btn-primary" onClick={doDownloadPdf} disabled={generating || fotos===null}>
+            <IconDownload width="15" height="15"/>{generating ? 'Gerando PDF...' : fotos===null ? 'Carregando fotos...' : 'Baixar PDF'}
+          </button>
+        </div>
+      </div>
+
+      <div className="card no-print">
+        <div className="card-body" style={{display:'flex', gap:14, alignItems:'center', flexWrap:'wrap'}}>
+          <div className="field" style={{margin:0, minWidth:200}}>
+            <label>Status da cobrança</label>
+            <select value={current.status} onChange={e=>onStatus(e.target.value)}>
+              {AVARIA_STATUS_OPTIONS.map(s=><option key={s}>{s}</option>)}
+            </select>
+          </div>
+          <div style={{flex:1, minWidth:200}}>
+            <div className="hint" style={{margin:0}}>Total a cobrar</div>
+            <b style={{fontSize:18, color:'var(--navy)'}}>{fmtMoney(totais.total)}</b>
+          </div>
+          {contaReceber ? (
+            <span className="badge badge-green">Lançado em Contas a Receber · {contaReceber.status}</span>
+          ) : (
+            <button className="btn btn-secondary" disabled={totais.total<=0} onClick={onLancarFinanceiro}>
+              <IconWallet width="15" height="15"/>Lançar em Contas a Receber
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="proposal-doc-wrap">
+        <AvariaDocument av={current} settings={settings} fotos={fotos || []}/>
+      </div>
+    </div>
+  );
+}
+
+function AvariasTab({proposals, settings, currentUser, avarias, contasReceber, onSaveAvaria, onDeleteAvaria, onLancarFinanceiro, notify}){
+  const [mode, setMode] = useState('list');
+  const [currentId, setCurrentId] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [query, setQuery] = useState('');
+  const [statusFiltro, setStatusFiltro] = useState('');
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const current = avarias.find(a=>a.id===currentId) || null;
+
+  // Grava fotos novas, remove as excluídas e salva o relatório só com as referências
+  const salvar = async (av) => {
+    const db = getFirebaseDb();
+    const id = av.id || uid();
+    const anterior = avarias.find(a=>a.id===id);
+    const idsAntes = new Set(((anterior && anterior.fotos) || []).map(f=>f.id));
+    const fotos = av.fotos || [];
+    let fotosRefs;
+    try{
+      if(db){
+        await salvarFotosAvariaNaNuvem(id, fotos.filter(f=>!f.salva && f.dataUrl));
+        const removidas = [...idsAntes].filter(x=>!fotos.some(f=>f.id===x));
+        await excluirFotosAvariaDaNuvem(removidas);
+        fotosRefs = fotos.filter(f=>f.dataUrl || f.salva).map(f=>({id:f.id, legenda:f.legenda||''}));
+      } else {
+        fotosRefs = fotos.map(f=>({id:f.id, legenda:f.legenda||'', dataUrl:f.dataUrl}));
+      }
+    }catch(e){
+      console.error('Erro ao salvar fotos da avaria', e);
+      notify('Erro ao enviar as fotos — verifique a conexão e tente salvar de novo.');
+      return;
+    }
+    await onSaveAvaria({...av, id, fotos: fotosRefs, createdAt: av.createdAt || Date.now()});
+    notify(`Relatório ${fmtNumAvaria(av.numero)} salvo.`);
+    setCurrentId(id);
+    setMode('view');
+  };
+
+  if(mode==='new' || (mode==='edit' && draft)){
+    return <AvariaForm
+      proposals={proposals} settings={settings}
+      initial={draft}
+      onCancel={()=>setMode(current && mode==='edit' ? 'view' : 'list')}
+      notify={notify}
+      onSave={salvar}
+    />;
+  }
+  if(mode==='view' && current){
+    const conta = (contasReceber||[]).find(c => c.id===current.contaReceberId || c.avariaId===current.id) || null;
+    return <AvariaViewer current={current} settings={settings} contaReceber={conta} notify={notify}
+      onBack={()=>setMode('list')}
+      onEdit={()=>{ setDraft(current); setMode('edit'); }}
+      onStatus={(s)=>{ onSaveAvaria({...current, status:s}); notify('Status atualizado.'); }}
+      onLancarFinanceiro={()=>{ onLancarFinanceiro(current); notify('Cobrança lançada em Contas a Receber.'); }}
+    />;
+  }
+
+  const q = query.toLowerCase();
+  const filtered = avarias
+    .slice()
+    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+    .filter(a => !statusFiltro || a.status===statusFiltro)
+    .filter(a => (a.cliente.razaoSocial||'').toLowerCase().includes(q) || String(a.numero).includes(q)
+      || String(a.contratoNumero||'').includes(q) || (a.patrimonio||'').toLowerCase().includes(q));
+  const totalAberto = avarias.filter(a=>!['Pago','Cancelado'].includes(a.status)).reduce((s,a)=>s+avariaTotais(a).total,0);
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>Avarias</h1>
+          <p>Relatórios de mau uso vinculados aos contratos de locação.</p>
+        </div>
+        <button className="btn btn-primary" onClick={()=>{ setDraft(novaAvaria(settings, currentUser)); setMode('new'); }}><IconPlus width="15" height="15"/>Novo relatório</button>
+      </div>
+
+      {avarias.length>0 && (
+        <div className="hint" style={{marginBottom:12}}>
+          {avarias.length} relatório(s) · Em aberto para cobrança: <b>{fmtMoney(totalAberto)}</b>
+        </div>
+      )}
+
+      <div style={{display:'flex', gap:10, flexWrap:'wrap', alignItems:'stretch'}}>
+        <div className="search-row" style={{flex:1, minWidth:220}}>
+          <IconSearch width="16" height="16" style={{color:'var(--muted)'}}/>
+          <input placeholder="Buscar por nº, cliente, contrato ou patrimônio..." value={query} onChange={e=>setQuery(e.target.value)}/>
+        </div>
+        <select value={statusFiltro} onChange={e=>setStatusFiltro(e.target.value)} style={{width:'auto', minWidth:180, marginBottom:16}}>
+          <option value="">Todos os status</option>
+          {AVARIA_STATUS_OPTIONS.map(s=><option key={s}>{s}</option>)}
+        </select>
+      </div>
+
+      <div className="card">
+        {filtered.length===0 ? (
+          <div className="empty-state">
+            <IconAlertTriangle/>
+            <p>{avarias.length===0 ? 'Nenhum relatório de avaria registrado ainda.' : 'Nenhum relatório encontrado para essa busca.'}</p>
+            {avarias.length===0 && <button className="btn btn-secondary" onClick={()=>{ setDraft(novaAvaria(settings, currentUser)); setMode('new'); }}>Criar primeiro relatório</button>}
+          </div>
+        ) : (
+          <table className="rtable">
+            <thead><tr><th>Nº</th><th>Cliente</th><th>Contrato</th><th>Equipamento</th><th>Data</th><th>Total</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {filtered.map(a=>(
+                <tr key={a.id}>
+                  <td className="mono" data-label="Nº">{fmtNumAvaria(a.numero)}</td>
+                  <td data-label="Cliente"><b>{a.cliente.razaoSocial}</b></td>
+                  <td data-label="Contrato">#{a.contratoNumero}</td>
+                  <td data-label="Equipamento">{[a.equipamento, a.modelo].filter(Boolean).join(' – ')}{a.patrimonio ? <div className="hint">Pat. {a.patrimonio}</div> : null}</td>
+                  <td data-label="Data">{fmtDateBR(a.data)}</td>
+                  <td data-label="Total" className="mono">{fmtMoney(avariaTotais(a).total)}</td>
+                  <td data-label="Status"><span className={`badge ${AVARIA_STATUS_BADGE[a.status]||'badge-gray'}`}>{a.status}</span></td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <button className="icon-btn" title="Visualizar" onClick={()=>{setCurrentId(a.id); setMode('view');}}><IconEye/></button>
+                      <button className="icon-btn" title="Editar" onClick={()=>{setCurrentId(a.id); setDraft(a); setMode('edit');}}><IconEdit/></button>
+                      <button className="icon-btn del" title="Excluir" onClick={()=>setConfirmDel(a)}><IconTrash/></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <ConfirmModal
+        open={!!confirmDel}
+        title="Excluir relatório de avaria"
+        text={confirmDel ? `Tem certeza que deseja excluir o relatório ${fmtNumAvaria(confirmDel.numero)} (${confirmDel.cliente.razaoSocial})? As fotos também serão apagadas.` : ''}
+        onConfirm={()=>{
+          excluirFotosAvariaDaNuvem((confirmDel.fotos||[]).map(f=>f.id));
+          onDeleteAvaria(confirmDel.id); notify('Relatório excluído.'); setConfirmDel(null);
+        }}
+        onCancel={()=>setConfirmDel(null)}
+      />
+    </div>
+  );
+}
+
+/* ==================================================================== */
 /* ANÁLISE DE FATURAMENTO */
 /* ==================================================================== */
 const STATUS_COLOR_VAR = {
@@ -5102,7 +5940,7 @@ function ConfigTab({settings, onSave, notify, fullData, onRestore, onMerge, clou
         title="Zerar todos os dados"
         text="Isso vai apagar TODOS os clientes, máquinas, propostas, OS e faturas cadastrados, sem volta. Recomendado só depois de confirmar que você já baixou um backup, se precisar dele."
         onConfirm={()=>{
-          onRestore({clients:[], machines:[], proposals:[], os:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[]});
+          onRestore({clients:[], machines:[], proposals:[], os:[], avarias:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[]});
           setConfirmWipe(false);
           notify('Sistema zerado. Pronto para começar do zero.');
         }}
@@ -5162,6 +6000,7 @@ function ConfigTab({settings, onSave, notify, fullData, onRestore, onMerge, clou
           <div className="grid3">
             <div className="field"><label>Próximo número de proposta</label><input type="number" value={form.nextProposalNumber} onChange={e=>set('nextProposalNumber', parseInt(e.target.value)||1)}/></div>
             <div className="field"><label>Próximo número de OS</label><input type="number" value={form.nextOsNumber} onChange={e=>set('nextOsNumber', parseInt(e.target.value)||1)}/></div>
+            <div className="field"><label>Próximo relatório de avaria</label><input type="number" value={form.nextAvariaNumber||1} onChange={e=>set('nextAvariaNumber', parseInt(e.target.value)||1)}/></div>
             <div className="field"><label>Consultor padrão</label><input value={form.defaultConsultor} onChange={e=>set('defaultConsultor', e.target.value)}/></div>
           </div>
           <div className="field"><label>Validade padrão</label><input value={form.defaultValidade} onChange={e=>set('defaultValidade', e.target.value)}/></div>
@@ -5213,7 +6052,7 @@ function App(){
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('propostas');
   const [mobileView, setMobileView] = useState('menu'); // 'menu' | 'content' — mobile single-screen navigation
-  const [data, setData] = useState({clients:[], machines:[], proposals:[], os:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}});
+  const [data, setData] = useState({clients:[], machines:[], proposals:[], os:[], avarias:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}});
   const [cloudStatus, setCloudStatus] = useState(FIREBASE_CONFIGURED ? 'connecting' : 'local'); // 'local' | 'connecting' | 'online' | 'error'
   const [openFaturaId, setOpenFaturaId] = useState(null);
   const [toastMsg, notify] = useToast();
@@ -5230,7 +6069,7 @@ function App(){
           if(snap.exists){
             setData(normalizeCloudData(snap.data()));
           } else {
-            const initial = {clients:[], machines:[], proposals:[], os:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}};
+            const initial = {clients:[], machines:[], proposals:[], os:[], avarias:[], faturas:[], contasPagar:[], contasReceber:[], extratoOfx:[], users:[...USERS], settings:{...DEFAULT_SETTINGS}};
             docRef.set(initial).catch(e=>console.error('Erro ao inicializar doc na nuvem', e));
             setData(initial);
           }
@@ -5418,6 +6257,43 @@ function App(){
   });
   const deleteOs = (id) => persistAndSet(prev => ({...prev, os: prev.os.filter(o=>o.id!==id)}));
 
+  // ---- Avarias (relatórios de mau uso) ----
+  const saveAvaria = (a) => persistAndSet(prev => {
+    const lista = prev.avarias || [];
+    const exists = lista.some(x=>x.id===a.id);
+    const avarias = exists ? lista.map(x=>x.id===a.id?a:x) : [...lista, a];
+    let settings = prev.settings;
+    if(!exists){
+      const usedNum = parseInt(a.numero);
+      const atual = prev.settings.nextAvariaNumber||1;
+      settings = {...prev.settings, nextAvariaNumber: (!isNaN(usedNum) && usedNum >= atual) ? usedNum+1 : atual};
+    }
+    return {...prev, avarias, settings};
+  });
+  const deleteAvaria = (id) => persistAndSet(prev => ({...prev, avarias: (prev.avarias||[]).filter(a=>a.id!==id)}));
+  const lancarAvariaNoFinanceiro = (a) => persistAndSet(prev => {
+    const total = avariaTotais(a).total;
+    const conta = {
+      id: uid(), createdAt: Date.now(),
+      descricao: `Avaria ${fmtNumAvaria(a.numero)} — ${a.cliente.razaoSocial}`,
+      categoria: AVARIA_CATEGORIA_RECEITA,
+      contraparte: a.cliente.razaoSocial,
+      contaBancariaId: '',
+      valor: total,
+      dataEmissao: todayISO(),
+      dataVencimento: calcularVencimento(todayISO(), prev.settings.defaultPagamento||''),
+      dataPagamento: '', status: 'Pendente', formaPagamento: '',
+      numeroDocumento: fmtNumAvaria(a.numero),
+      observacoes: `Relatório de avarias por mau uso — contrato nº ${a.contratoNumero}`,
+      propostaId: a.propostaId, faturaId: null, avariaId: a.id, recorrente: false
+    };
+    const cats = linhasFromText(prev.settings.categoriasReceita);
+    const settings = cats.includes(AVARIA_CATEGORIA_RECEITA) ? prev.settings
+      : {...prev.settings, categoriasReceita: [...cats.filter(c=>c!=='Outros'), AVARIA_CATEGORIA_RECEITA, ...(cats.includes('Outros')?['Outros']:[])].join('\n')};
+    const avarias = (prev.avarias||[]).map(x=>x.id===a.id ? {...x, contaReceberId: conta.id, status: x.status==='Em aberto' ? 'Enviado ao cliente' : x.status} : x);
+    return {...prev, contasReceber: [...(prev.contasReceber||[]), conta], avarias, settings};
+  });
+
   const saveSettings = (settings) => persistAndSet(prev => ({...prev, settings}));
 
   const changePassword = (userName, newPassword) => persistAndSet(prev => {
@@ -5431,6 +6307,7 @@ function App(){
     machines: Array.isArray(incoming.machines) ? incoming.machines : prev.machines,
     proposals: Array.isArray(incoming.proposals) ? incoming.proposals : prev.proposals,
     os: Array.isArray(incoming.os) ? incoming.os : prev.os,
+    avarias: Array.isArray(incoming.avarias) ? incoming.avarias : (prev.avarias||[]),
     faturas: Array.isArray(incoming.faturas) ? incoming.faturas : prev.faturas,
     contasPagar: Array.isArray(incoming.contasPagar) ? incoming.contasPagar : prev.contasPagar,
     contasReceber: Array.isArray(incoming.contasReceber) ? incoming.contasReceber : prev.contasReceber,
@@ -5455,6 +6332,7 @@ function App(){
       machines: mergeArr(prev.machines, incoming.machines),
       proposals: mergeArr(prev.proposals, incoming.proposals),
       os: mergeArr(prev.os, incoming.os),
+      avarias: mergeArr(prev.avarias||[], incoming.avarias),
       faturas: mergeArr(prev.faturas, incoming.faturas),
       contasPagar: mergeArr(prev.contasPagar, incoming.contasPagar),
       contasReceber: mergeArr(prev.contasReceber, incoming.contasReceber),
@@ -5481,6 +6359,7 @@ function App(){
     {id:'clientes', label:'Clientes', short:'Clientes', icon:IconUsers, count:data.clients.length},
     {id:'maquinas', label:'Máquinas', short:'Máquinas', icon:IconTruck, count:data.machines.length},
     {id:'ordens', label:'Ordem de Serviço', short:'OS', icon:IconWrench, count:data.os.length},
+    {id:'avarias', label:'Avarias', short:'Avarias', icon:IconAlertTriangle, count:(data.avarias||[]).length},
     {id:'faturas', label:'Faturas', short:'Faturas', icon:IconReceipt, count:(data.faturas||[]).length, alert:faturasVencidasCount},
     {id:'faturamento', label:'Análise de Faturamento', short:'Faturamento', icon:IconBarChart, count:null},
     {id:'financeiro', label:'Financeiro', short:'Financeiro', icon:IconWallet, count:null},
@@ -5575,6 +6454,7 @@ function App(){
         {tab==='maquinas' && <MaquinasTab machines={data.machines} onSave={saveMachine} onDelete={deleteMachine} notify={notify}/>}
         {tab==='config' && <ConfigTab settings={data.settings} onSave={saveSettings} notify={notify} fullData={data} onRestore={restoreData} onMerge={mergeData} cloudStatus={cloudStatus}/>}
         {tab==='ordens' && <OrdensServicoTab proposals={data.proposals} settings={data.settings} currentUser={currentUser} os={data.os} onSaveOs={saveOs} onDeleteOs={deleteOs} notify={notify}/>}
+        {tab==='avarias' && <AvariasTab proposals={data.proposals} settings={data.settings} currentUser={currentUser} avarias={data.avarias||[]} contasReceber={data.contasReceber||[]} onSaveAvaria={saveAvaria} onDeleteAvaria={deleteAvaria} onLancarFinanceiro={lancarAvariaNoFinanceiro} notify={notify}/>}
         {tab==='faturas' && <FaturasTab faturas={data.faturas} settings={data.settings} notify={notify} onSaveFatura={saveFatura} onDeleteFatura={deleteFatura} openFaturaId={openFaturaId} onConsumeOpenFatura={()=>setOpenFaturaId(null)}/>}
         {tab==='faturamento' && <FaturamentoTab proposals={data.proposals}/>}
         {tab==='financeiro' && <FinanceiroModule
