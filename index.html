@@ -2428,11 +2428,12 @@ function SignaturePad({onChange}){
   );
 }
 
-function AssinaturaPresencialModal({prop, role, currentUser, onClose, onSave, notify}){
+function AssinaturaPresencialModal({prop, role, currentUser, onClose, onSave, notify, tipoDoc}){
   const isAwp = role === 'awp';
+  const isAvaria = tipoDoc === 'avaria';
   const [nome, setNome] = useState(isAwp ? (currentUser || '') : (prop.cliente.responsavel || ''));
   const [cpf, setCpf] = useState('');
-  const [cargo, setCargo] = useState(isAwp ? 'Consultor AWP Plataformas' : '');
+  const [cargo, setCargo] = useState(isAwp ? (isAvaria ? 'Responsável pela vistoria' : 'Consultor AWP Plataformas') : '');
   const [documento, setDocumento] = useState('');
   const [assinaturaImg, setAssinaturaImg] = useState('');
   const [aceite, setAceite] = useState(false);
@@ -2490,8 +2491,8 @@ function AssinaturaPresencialModal({prop, role, currentUser, onClose, onSave, no
         <h3>{isAwp ? 'Assinatura do responsável AWP' : 'Assinatura do cliente'}</h3>
         <p style={{marginBottom:12}}>
           {isAwp
-            ? 'Assine como responsável pela AWP Plataformas nesta proposta.'
-            : 'Passe o aparelho para o cliente assinar diretamente aqui, na hora do fechamento.'}
+            ? (isAvaria ? 'Assine como responsável pela vistoria deste relatório de avarias.' : 'Assine como responsável pela AWP Plataformas nesta proposta.')
+            : (isAvaria ? 'Passe o aparelho para o responsável do cliente assinar diretamente aqui.' : 'Passe o aparelho para o cliente assinar diretamente aqui, na hora do fechamento.')}
         </p>
         <div className="grid2">
           <div className="field"><label>Nome completo</label><input value={nome} onChange={e=>setNome(e.target.value)}/></div>
@@ -2508,7 +2509,9 @@ function AssinaturaPresencialModal({prop, role, currentUser, onClose, onSave, no
         <label style={{display:'flex', alignItems:'flex-start', gap:8, fontSize:12.5, margin:'10px 0 14px', cursor:'pointer'}}>
           <input type="checkbox" style={{width:'auto', marginTop:2}} checked={aceite} onChange={e=>setAceite(e.target.checked)}/>
           <span>
-            {isAwp
+            {isAvaria
+              ? (isAwp ? DECLARACAO_AVARIA_AWP : DECLARACAO_AVARIA_CLIENTE)
+              : isAwp
               ? 'Declaro que assino esta proposta como responsável pela AWP Plataformas, confirmando as condições comerciais e operacionais nela descritas.'
               : 'Declaro ciência e concordância com as condições comerciais, operacionais e de segurança desta proposta, autorizando a emissão do contrato de locação.'}
           </span>
@@ -2924,7 +2927,7 @@ function AssinaturasRecebidas({proposals, onSaveProposal, notify}){
     if(!db){ setLoading(false); return; }
     const unsub = db.collection(SIGNATURES_COLLECTION).where('aplicado','==', false).onSnapshot(
       (snap) => {
-        setPendentes(snap.docs.map(d=>({id:d.id, ...d.data()})));
+        setPendentes(snap.docs.map(d=>({id:d.id, ...d.data()})).filter(x=>x.tipo!=='avaria')); // as de avaria são aplicadas automaticamente pelo App
         setLoading(false);
       },
       (err) => { console.error(err); setLoading(false); }
@@ -3939,6 +3942,11 @@ function AvariaForm({proposals, settings, initial, onCancel, onSave, notify}){
         </div>
       </div>
 
+      {(initial.assinaturaAwp || initial.assinaturaCliente) && (
+        <div className="login-error" style={{marginBottom:14}}>
+          Este relatório já foi assinado. Ao salvar alterações, as assinaturas serão removidas e precisarão ser coletadas de novo, já que o conteúdo assinado mudou.
+        </div>
+      )}
       <div className="card">
         <div className="card-head"><h2><span className="num">1</span>Vínculo com a locação</h2></div>
         <div className="card-body">
@@ -4188,16 +4196,14 @@ function AvariaDocument({av, settings, fotos}){
         </div>
       )}
 
-      <div className="os-decl-grid">
+      <div className="doc-sign-cols" style={{marginTop:16}}>
         <div>
-          <p>{settings.companyName}</p>
-          <div className="sign-line"></div>
-          <div className="small">{av.vistoriadoPor ? `${av.vistoriadoPor} — ` : ''}RESPONSÁVEL PELA VISTORIA</div>
+          <div className="doc-sign-col-title">LOCADORA — Responsável pela vistoria</div>
+          <SignatureBlock assinatura={av.assinaturaAwp}/>
         </div>
         <div>
-          <p>LOCATÁRIA — CIENTE</p>
-          <div className="sign-line"></div>
-          <div className="small">NOME, CPF E ASSINATURA DO RESPONSÁVEL — DATA</div>
+          <div className="doc-sign-col-title">LOCATÁRIA — Ciente e de acordo</div>
+          <SignatureBlock assinatura={av.assinaturaCliente}/>
         </div>
       </div>
 
@@ -4242,8 +4248,11 @@ function AvariaPreview({av, settings, salvando, onBack, onConfirmSave, notify}){
   );
 }
 
-function AvariaViewer({current, settings, contaReceber, onBack, onEdit, onLancarFinanceiro, onStatus, notify}){
+function AvariaViewer({current, settings, currentUser, contaReceber, onBack, onEdit, onLancarFinanceiro, onStatus, onSave, notify}){
   const [generating, setGenerating] = useState(false);
+  const [assinaturaModo, setAssinaturaModo] = useState(null); // null | 'awp' | 'cliente'
+  const [showLink, setShowLink] = useState(false);
+  const [confirmRemover, setConfirmRemover] = useState(null);
   const fotos = useFotosAvaria(current.fotos);
   const totais = avariaTotais(current);
   const doDownloadPdf = async () => {
@@ -4291,9 +4300,68 @@ function AvariaViewer({current, settings, contaReceber, onBack, onEdit, onLancar
         </div>
       </div>
 
+      <div className="card no-print">
+        <div className="card-head"><h2>✍️ Assinaturas</h2></div>
+        <div className="card-body">
+          <div style={{display:'flex', gap:18, flexWrap:'wrap', marginBottom:12}}>
+            <div>
+              <div className="hint" style={{marginBottom:4}}>Responsável AWP</div>
+              {current.assinaturaAwp ? (
+                <span className="badge badge-green" style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  {current.assinaturaAwp.nome} em {fmtDataHoraLocal(current.assinaturaAwp.dataHora).data}
+                  <button type="button" onClick={()=>setConfirmRemover('awp')} title="Remover assinatura"
+                    style={{background:'none', border:'none', padding:0, cursor:'pointer', color:'inherit', opacity:.6, lineHeight:1, fontSize:13}}>✕</button>
+                </span>
+              ) : <span className="badge badge-gray">Pendente</span>}
+            </div>
+            <div>
+              <div className="hint" style={{marginBottom:4}}>Cliente (locatária)</div>
+              {current.assinaturaCliente ? (
+                <span className="badge badge-green" style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  {current.assinaturaCliente.nome} em {fmtDataHoraLocal(current.assinaturaCliente.dataHora).data}
+                  <button type="button" onClick={()=>setConfirmRemover('cliente')} title="Remover assinatura"
+                    style={{background:'none', border:'none', padding:0, cursor:'pointer', color:'inherit', opacity:.6, lineHeight:1, fontSize:13}}>✕</button>
+                </span>
+              ) : <span className="badge badge-gray">Pendente</span>}
+            </div>
+          </div>
+          <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+            {!current.assinaturaAwp && (
+              <button className="btn btn-secondary btn-sm" onClick={()=>setAssinaturaModo('awp')}><IconEdit width="14" height="14"/>Assinar (AWP)</button>
+            )}
+            {!current.assinaturaCliente && <>
+              <button className="btn btn-secondary btn-sm" onClick={()=>setAssinaturaModo('cliente')}><IconEdit width="14" height="14"/>Cliente assina aqui</button>
+              <button className="btn btn-primary btn-sm" onClick={()=>setShowLink(true)}><IconLink width="14" height="14"/>Gerar link p/ cliente assinar</button>
+            </>}
+          </div>
+          {!current.assinaturaCliente && (
+            <div className="hint" style={{marginTop:8}}>Quando o cliente assinar pelo link, a assinatura entra sozinha neste relatório e o status muda para "Aprovado pelo cliente".</div>
+          )}
+        </div>
+      </div>
+
       <div className="proposal-doc-wrap">
         <AvariaDocument av={current} settings={settings} fotos={fotos || []}/>
       </div>
+
+      {assinaturaModo && (
+        <AssinaturaPresencialModal prop={current} role={assinaturaModo} currentUser={currentUser} tipoDoc="avaria"
+          onClose={()=>setAssinaturaModo(null)} notify={notify}
+          onSave={(upd)=>onSave(assinaturaModo==='cliente' ? aplicarAssinaturaClienteAvaria(current, upd.assinaturaCliente) : upd)}/>
+      )}
+      {showLink && <LinkAssinaturaAvariaModal av={current} settings={settings} onClose={()=>setShowLink(false)} notify={notify}/>}
+      <ConfirmModal
+        open={!!confirmRemover}
+        title="Remover assinatura"
+        text={confirmRemover==='awp'
+          ? 'Isso remove a assinatura do responsável AWP deste relatório. Não pode ser desfeito.'
+          : 'Isso remove a assinatura do cliente deste relatório. Não pode ser desfeito.'}
+        onConfirm={()=>{
+          onSave({...current, [confirmRemover==='awp' ? 'assinaturaAwp' : 'assinaturaCliente']: null});
+          notify('Assinatura removida.'); setConfirmRemover(null);
+        }}
+        onCancel={()=>setConfirmRemover(null)}
+      />
     </div>
   );
 }
@@ -4330,7 +4398,7 @@ function AvariasTab({proposals, settings, currentUser, avarias, contasReceber, o
       notify('Erro ao enviar as fotos — verifique a conexão e tente salvar de novo.');
       return;
     }
-    await onSaveAvaria({...av, id, fotos: fotosRefs, createdAt: av.createdAt || Date.now()});
+    await onSaveAvaria({...av, id, fotos: fotosRefs, createdAt: av.createdAt || Date.now(), assinaturaAwp: null, assinaturaCliente: null});
     notify(`Relatório ${fmtNumAvaria(av.numero)} salvo.`);
     setCurrentId(id);
     setMode('view');
@@ -4347,7 +4415,8 @@ function AvariasTab({proposals, settings, currentUser, avarias, contasReceber, o
   }
   if(mode==='view' && current){
     const conta = (contasReceber||[]).find(c => c.id===current.contaReceberId || c.avariaId===current.id) || null;
-    return <AvariaViewer current={current} settings={settings} contaReceber={conta} notify={notify}
+    return <AvariaViewer current={current} settings={settings} currentUser={currentUser} contaReceber={conta} notify={notify}
+      onSave={(a)=>onSaveAvaria(a)}
       onBack={()=>setMode('list')}
       onEdit={()=>{ setDraft(current); setMode('edit'); }}
       onStatus={(s)=>{ onSaveAvaria({...current, status:s}); notify('Status atualizado.'); }}
@@ -4410,7 +4479,10 @@ function AvariasTab({proposals, settings, currentUser, avarias, contasReceber, o
                   <td data-label="Equipamento">{[a.equipamento, a.modelo].filter(Boolean).join(' – ')}{a.patrimonio ? <div className="hint">Pat. {a.patrimonio}</div> : null}</td>
                   <td data-label="Data">{fmtDateBR(a.data)}</td>
                   <td data-label="Total" className="mono">{fmtMoney(avariaTotais(a).total)}</td>
-                  <td data-label="Status"><span className={`badge ${AVARIA_STATUS_BADGE[a.status]||'badge-gray'}`}>{a.status}</span></td>
+                  <td data-label="Status">
+                    <span className={`badge ${AVARIA_STATUS_BADGE[a.status]||'badge-gray'}`}>{a.status}</span>
+                    {a.assinaturaCliente && <div className="hint" style={{marginTop:4}}>✍️ Assinado pelo cliente</div>}
+                  </td>
                   <td className="actions-cell">
                     <div className="row-actions">
                       <button className="icon-btn" title="Visualizar" onClick={()=>{setCurrentId(a.id); setMode('view');}}><IconEye/></button>
@@ -4435,6 +4507,218 @@ function AvariasTab({proposals, settings, currentUser, avarias, contasReceber, o
         }}
         onCancel={()=>setConfirmDel(null)}
       />
+    </div>
+  );
+}
+
+const DECLARACAO_AVARIA_AWP = 'Declaro que realizei/acompanhei a vistoria do equipamento e que as avarias, o registro fotográfico e os custos descritos neste relatório correspondem ao que foi constatado.';
+const DECLARACAO_AVARIA_CLIENTE = 'Declaro ciência e concordância com as avarias constatadas e registradas neste relatório, inclusive no registro fotográfico, e com os custos de reparo nele descritos, conforme as condições do contrato de locação.';
+
+function aplicarAssinaturaClienteAvaria(av, assinatura){
+  const novoStatus = ['Em aberto','Enviado ao cliente'].includes(av.status) ? 'Aprovado pelo cliente' : av.status;
+  return {...av, assinaturaCliente: assinatura, status: novoStatus};
+}
+
+// Só o necessário para o cliente revisar e assinar (sem status interno, financeiro etc.)
+function buildAvariaSharePayload(av, settings){
+  return {
+    tipo: 'avaria',
+    avariaId: av.id, numero: av.numero, data: av.data,
+    cliente: av.cliente,
+    contratoNumero: av.contratoNumero, propostaNumero: av.propostaNumero, periodoLocacao: av.periodoLocacao,
+    equipamento: av.equipamento, modelo: av.modelo, marca: av.marca, numeroSerie: av.numeroSerie,
+    patrimonio: av.patrimonio, horimetro: av.horimetro,
+    dataConstatacao: av.dataConstatacao, momentoConstatacao: av.momentoConstatacao, vistoriadoPor: av.vistoriadoPor,
+    descricao: av.descricao,
+    fotos: (av.fotos||[]).map(f=>({id:f.id, legenda:f.legenda||'', ...(f.dataUrl ? {dataUrl:f.dataUrl} : {})})),
+    horasMaoObra: av.horasMaoObra, valorHora: av.valorHora,
+    pecas: av.pecas||[], insumos: av.insumos||[],
+    observacoes: av.observacoes, textoResponsabilidade: av.textoResponsabilidade,
+    assinaturaAwp: av.assinaturaAwp || null,
+    criadoEm: new Date().toISOString(),
+    s: {
+      brandName: settings.brandName, tagline: settings.tagline, companyName: settings.companyName,
+      companyCnpj: settings.companyCnpj, companyAddress: settings.companyAddress,
+      companyEmail: settings.companyEmail, companyPhone: settings.companyPhone
+    }
+  };
+}
+
+function LinkAssinaturaAvariaModal({av, settings, onClose, notify}){
+  const [link, setLink] = useState('');
+  const [senha, setSenha] = useState('');
+  const [gerando, setGerando] = useState(true);
+  const [erro, setErro] = useState(false);
+
+  useEffect(()=>{
+    let cancelado = false;
+    (async () => {
+      try{
+        const db = getFirebaseDb();
+        if(!db) throw new Error('Nuvem indisponível para gerar o link.');
+        const novaSenha = gerarSenhaAleatoria();
+        const payload = JSON.parse(JSON.stringify({...buildAvariaSharePayload(av, settings), senha: novaSenha}));
+        const docRef = await db.collection(SHARED_LINKS_COLLECTION).add(payload);
+        if(cancelado) return;
+        setLink(`${window.location.origin}${window.location.pathname}?assinar=${docRef.id}`);
+        setSenha(novaSenha);
+      }catch(e){
+        console.error('Erro ao gerar link de assinatura da avaria', e);
+        if(!cancelado) setErro(true);
+      }finally{
+        if(!cancelado) setGerando(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, []);
+
+  const copiar = async (texto, msg) => {
+    try{ await navigator.clipboard.writeText(texto); notify(msg); }
+    catch(e){ notify('Não foi possível copiar automaticamente — selecione o texto manualmente.'); }
+  };
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" style={{maxWidth:480}} onClick={e=>e.stopPropagation()}>
+        <h3>Link de assinatura do relatório</h3>
+        <p style={{marginBottom:10}}>
+          Envie para o responsável do cliente revisar o relatório {fmtNumAvaria(av.numero)} (com as fotos) e assinar de qualquer aparelho, sem login.
+          A assinatura volta sozinha para este relatório.
+        </p>
+        {gerando ? (
+          <p className="hint">Gerando link...</p>
+        ) : erro ? (
+          <p className="login-error">Não foi possível gerar o link. Verifique a conexão com a nuvem e tente novamente.</p>
+        ) : (
+          <>
+            <div className="field">
+              <label>Link</label>
+              <input readOnly value={link} onFocus={e=>e.target.select()} style={{fontFamily:"'IBM Plex Mono',monospace", fontSize:12.5}}/>
+            </div>
+            <div className="field">
+              <label>Senha de acesso</label>
+              <input readOnly value={senha} onFocus={e=>e.target.select()} style={{fontFamily:"'IBM Plex Mono',monospace", fontSize:16, fontWeight:700, letterSpacing:'.1em', textAlign:'center'}}/>
+            </div>
+            <div className="hint" style={{marginBottom:6}}>
+              Por segurança, mande o link e a senha em mensagens separadas. Se o relatório for editado depois, gere um link novo.
+            </div>
+            <button type="button" className="btn btn-secondary btn-sm" style={{width:'100%', justifyContent:'center', marginBottom:14}}
+              onClick={()=>copiar(`Relatório de avarias ${fmtNumAvaria(av.numero)} para assinatura: ${link}\nSenha de acesso: ${senha}`, 'Link e senha copiados juntos!')}>
+              Copiar link + senha juntos
+            </button>
+          </>
+        )}
+        <div className="row" style={{flexWrap:'wrap'}}>
+          <button className="btn btn-ghost" onClick={onClose}>Fechar</button>
+          <button className="btn btn-secondary" onClick={()=>copiar(senha, 'Senha copiada!')} disabled={gerando || erro || !senha}>Copiar só a senha</button>
+          <button className="btn btn-primary" onClick={()=>copiar(link, 'Link copiado! Cole no WhatsApp ou e-mail.')} disabled={gerando || erro || !link}><IconClipboard width="15" height="15"/>Copiar só o link</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Página aberta pelo cliente (sem login) depois de digitar a senha do link
+function AvariaPublicSign({decoded}){
+  const fotos = useFotosAvaria(decoded.fotos);
+  const [nome, setNome] = useState(decoded.cliente && decoded.cliente.responsavel ? decoded.cliente.responsavel : '');
+  const [cpf, setCpf] = useState('');
+  const [cargo, setCargo] = useState('');
+  const [documento, setDocumento] = useState('');
+  const [assinaturaImg, setAssinaturaImg] = useState('');
+  const [aceite, setAceite] = useState(false);
+  const [error, setError] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  const settingsForDoc = { ...DEFAULT_SETTINGS, ...decoded.s };
+
+  const enviar = async () => {
+    if(!nome.trim()){ setError('Informe o nome de quem está assinando.'); return; }
+    if(!cpf.trim()){ setError('O CPF é obrigatório para assinar.'); return; }
+    if(!validarCPF(cpf)){ setError('CPF inválido. Confira os números digitados.'); return; }
+    if(!assinaturaImg){ setError('Assine no quadro acima antes de confirmar.'); return; }
+    if(!aceite){ setError('É necessário confirmar a declaração para concluir.'); return; }
+    setError(''); setEnviando(true);
+    try{
+      const meta = {
+        userAgent: navigator.userAgent || '', idioma: navigator.language || '',
+        resolucaoTela: `${window.screen.width}x${window.screen.height}`,
+        fusoHorario: Intl.DateTimeFormat().resolvedOptions().timeZone || '', ip: '', localizacao: ''
+      };
+      try{
+        const ctrl = new AbortController();
+        const t = setTimeout(()=>ctrl.abort(), 3500);
+        const res = await fetch('https://ipapi.co/json/', { signal: ctrl.signal });
+        clearTimeout(t);
+        if(res.ok){ const geo = await res.json(); meta.ip = geo.ip || ''; meta.localizacao = [geo.city, geo.region, geo.country_name].filter(Boolean).join('/'); }
+      }catch(e){ /* segue sem IP */ }
+      const db = getFirebaseDb();
+      if(!db) throw new Error('Sistema de assinatura indisponível no momento.');
+      await db.collection(SIGNATURES_COLLECTION).add({
+        tipo: 'avaria',
+        avariaId: decoded.avariaId,
+        numero: decoded.numero,
+        clienteNome: decoded.cliente.razaoSocial,
+        assinaturaCliente: { nome, cpf, cargo, documento, imagem: assinaturaImg, dataHora: new Date().toISOString(), ...meta },
+        criadoEm: new Date().toISOString(),
+        aplicado: false
+      });
+      setEnviado(true);
+    }catch(e){
+      console.error(e);
+      setError('Não foi possível enviar a assinatura. Verifique sua internet e tente novamente.');
+    }finally{
+      setEnviando(false);
+    }
+  };
+
+  if(enviado){
+    return (
+      <div className="login-screen">
+        <div className="login-card">
+          <div className="login-mark"><img src={LOGO_BOXED} alt="AWP Plataformas" style={{width:180, borderRadius:10, boxShadow:'0 6px 18px rgba(0,0,0,.25)'}}/></div>
+          <h1 style={{marginTop:14}}>Assinatura enviada!</h1>
+          <p className="login-sub">Obrigado, {nome.split(' ')[0]}. Sua assinatura do relatório de avarias {fmtNumAvaria(decoded.numero)} foi registrada com sucesso. Pode fechar esta janela.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{minHeight:'100vh', background:'var(--bg)', padding:'20px 12px 60px'}}>
+      <div className="proposal-doc-wrap" style={{marginBottom:20}}>
+        {fotos === null
+          ? <div className="loading-screen" style={{minHeight:200}}><div className="spinner"></div>Carregando fotos...</div>
+          : <AvariaDocument av={decoded} settings={settingsForDoc} fotos={fotos}/>}
+      </div>
+      <div className="proposal-doc-wrap">
+        <div className="modal" style={{maxWidth:600, width:'100%', boxShadow:'var(--shadow)'}}>
+          <h3>Assinatura eletrônica</h3>
+          <p style={{marginBottom:12}}>Revise o relatório e as fotos acima e assine abaixo como responsável pela locatária.</p>
+          <div className="grid2">
+            <div className="field"><label>Nome completo</label><input value={nome} onChange={e=>setNome(e.target.value)}/></div>
+            <div className="field"><label>Cargo/Função</label><input value={cargo} onChange={e=>setCargo(e.target.value)}/></div>
+          </div>
+          <div className="grid2">
+            <div className="field"><label>CPF *</label><input value={cpf} onChange={e=>setCpf(e.target.value)} placeholder="000.000.000-00"/></div>
+            <div className="field"><label>Documento (RG, opcional)</label><input value={documento} onChange={e=>setDocumento(e.target.value)}/></div>
+          </div>
+          <div className="field">
+            <label>Assinatura</label>
+            <SignatureCapture nome={nome} onChange={setAssinaturaImg}/>
+          </div>
+          <label style={{display:'flex', alignItems:'flex-start', gap:8, fontSize:12.5, margin:'10px 0 14px', cursor:'pointer'}}>
+            <input type="checkbox" style={{width:'auto', marginTop:2}} checked={aceite} onChange={e=>setAceite(e.target.checked)}/>
+            <span>{DECLARACAO_AVARIA_CLIENTE}</span>
+          </label>
+          <div className="hint" style={{marginBottom:10}}>Ao confirmar, também são registrados IP, localização aproximada, dispositivo e fuso horário como trilha de auditoria.</div>
+          {error && <div className="login-error">{error}</div>}
+          <div className="row">
+            <button className="btn btn-primary" style={{width:'100%', justifyContent:'center'}} onClick={enviar} disabled={enviando}>
+              {enviando ? 'Enviando...' : 'Confirmar assinatura'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -6340,6 +6624,26 @@ function App(){
     };
   });
 
+  // Assinaturas de relatórios de avaria feitas pelo link remoto: aplicadas sozinhas assim que alguém está com o sistema aberto
+  useEffect(()=>{
+    if(loading || !currentUser) return;
+    const db = getFirebaseDb();
+    if(!db) return;
+    const unsub = db.collection(SIGNATURES_COLLECTION).where('aplicado','==', false).onSnapshot(
+      (snap) => {
+        snap.docs.map(d=>({id:d.id, ...d.data()})).filter(x=>x.tipo==='avaria').forEach(item => {
+          const av = (dataRef.current.avarias||[]).find(a=>a.id===item.avariaId);
+          if(!av) return;
+          persistAndSet(prev => ({...prev, avarias: (prev.avarias||[]).map(a => a.id===item.avariaId ? aplicarAssinaturaClienteAvaria(a, item.assinaturaCliente) : a)}));
+          db.collection(SIGNATURES_COLLECTION).doc(item.id).update({aplicado:true}).catch(e=>console.error(e));
+          notify(`${item.assinaturaCliente.nome} assinou o relatório de avarias ${fmtNumAvaria(item.numero)}.`);
+        });
+      },
+      (err) => console.error('Erro ao ouvir assinaturas de avaria', err)
+    );
+    return () => unsub();
+  }, [loading, !!currentUser]);
+
   if(loading){
     return <div className="loading-screen"><div className="spinner"></div>Carregando sistema...</div>;
   }
@@ -6599,15 +6903,15 @@ function PublicSignPage({shareId}){
     return <div className="login-screen"><div className="login-card"><h1>Link inválido</h1><p className="login-sub">Este link de assinatura parece corrompido ou incompleto. Peça um novo link.</p></div></div>;
   }
   if(!decoded){
-    return <div className="loading-screen"><div className="spinner"></div>Carregando proposta...</div>;
+    return <div className="loading-screen"><div className="spinner"></div>Carregando documento...</div>;
   }
   if(!desbloqueado){
     return (
       <div className="login-screen">
         <div className="login-card">
           <div className="login-mark"><img src={LOGO_BOXED} alt="AWP Plataformas" style={{width:180, borderRadius:10, boxShadow:'0 6px 18px rgba(0,0,0,.25)'}}/></div>
-          <h1 style={{marginTop:14}}>Proposta nº {decoded.numero}</h1>
-          <p className="login-sub">Digite a senha de acesso que você recebeu para revisar e assinar esta proposta.</p>
+          <h1 style={{marginTop:14}}>{decoded.tipo==='avaria' ? `Relatório de avarias ${fmtNumAvaria(decoded.numero)}` : `Proposta nº ${decoded.numero}`}</h1>
+          <p className="login-sub">Digite a senha de acesso que você recebeu para revisar e assinar {decoded.tipo==='avaria' ? 'este relatório' : 'esta proposta'}.</p>
           <div className="field" style={{textAlign:'left'}}>
             <label>Senha de acesso</label>
             <input value={senhaDigitada}
@@ -6621,6 +6925,9 @@ function PublicSignPage({shareId}){
         </div>
       </div>
     );
+  }
+  if(decoded.tipo==='avaria'){
+    return <AvariaPublicSign decoded={decoded}/>;
   }
   if(enviado){
     return (
